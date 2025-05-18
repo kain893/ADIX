@@ -4,16 +4,16 @@ import os
 # ============================================================================
 # 1) Токен бота
 # ============================================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "5860673879:AAFbqCzLzLJ4j5xlnF7cl5TAoAXFomXMBmE")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7717741740:AAG4ZTVtnL08Mp9Ev9s4ooeodwd9GYAZpgc")
 
 # ============================================================================
 # 2) Настройки подключения к базе данных
 # ============================================================================
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "adix_db")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASS = os.getenv("DB_PASS", "password")
+DB_NAME = os.getenv("DB_NAME", "tele_shop")
+DB_USER = os.getenv("DB_USER", "tele_shop")
+DB_PASS = os.getenv("DB_PASS", "Qweasd123456")
 
 # ============================================================================
 # 3) Список основных категорий с подкатегориями
