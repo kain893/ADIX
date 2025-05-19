@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
-from typing import Optional
+import dataclasses
+from typing import Optional, List
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.exceptions import TelegramAPIError
-from collections import defaultdict
-
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import CallbackQuery
 
-from database   import SessionLocal, SupportTicket, SupportMessage
-from utils      import main_menu_keyboard, rus_status
+from database import SessionLocal, SupportTicket, SupportMessage
+from utils import main_menu_keyboard, rus_status
 
-ADMIN_SUPPORT_CHAT_ID = -1002288960086
-user_steps = defaultdict(dict)            # временное состояние «ответа»
+# ADMIN_SUPPORT_CHAT_ID = -1002288960086
+ADMIN_SUPPORT_CHAT_ID = -1002623967252
+
+class SupportStates(StatesGroup):
+    waiting_for_problem_description = State()
+    waiting_for_reply = State()
+
+@dataclasses.dataclass
+class ResolvedTicketMessage:
+    sender_id: int
+    text: str
+    created_at: int
+
+@dataclasses.dataclass
+class ResolvedTicket:
+    id: int
+    status: str
+    msgs: List[ResolvedTicketMessage]
 
 # ────────────────────────────────────────────────────────────────────
 def register_support_handlers(bot: Bot, dp: Dispatcher):
@@ -25,57 +42,50 @@ def register_support_handlers(bot: Bot, dp: Dispatcher):
                 raise
 
     # ── Главное меню «Обратная связь» ───────────────────────────────
-    @dp.message(func=lambda m: m.text.lower() == "обратная связь")
+    @dp.message(lambda m: m.text.lower() == "обратная связь")
     async def _open_menu(msg: types.Message):
         kb = types.InlineKeyboardMarkup(
-            row_width=1 #  ← ключевое!
-        ) # type: ignore[call-arg]
-        kb.add(types.InlineKeyboardButton(text="📝 Новое обращение", callback_data="st:new"))
-        kb.add(types.InlineKeyboardButton(text="📂 Мои обращения",  callback_data="st:list"))
+            inline_keyboard=[
+                [ types.InlineKeyboardButton(text="📝 Новое обращение", callback_data="st:new") ],
+                [ types.InlineKeyboardButton(text="📂 Мои обращения",  callback_data="st:list") ]
+            ]
+        )
         await bot.send_message(msg.chat.id, "Раздел обратной связи:", reply_markup=kb)
-
-    # ── Роутер callback-ов ──────────────────────────────────────────
-    @dp.callback_query(lambda c: c.data.startswith("st:"))
-    async def _router(call: types.CallbackQuery):
-        _, act, *rest = call.data.split(":", 2)
-        if   act == "new":   await _start_new(call)
-        elif act == "list":  await _show_list(call)
-        elif act == "view":  await _show_card(call, int(rest[0]))
-        elif act == "back":  await _show_list(call, redraw=True)
-        elif act == "close": await _close_ticket(call, int(rest[0]))
-        elif act == "reply": await _prep_reply(call, int(rest[0]))
 
     # ────────────────────────────────────────────────────────────────
     #   СОЗДАНИЕ НОВОГО ТИКЕТА
     # ────────────────────────────────────────────────────────────────
-    async def _start_new(call: types.CallbackQuery):
+    @dp.callback_query(lambda c: c.data == f"st:new")
+    async def _start_new(call: types.CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(call.id)
-        cid = call.message.chat.id
-        await _safe_edit(cid, call.message.message_id, "Опишите проблему одним сообщением:")
-        await bot.register_next_step_handler_by_chat_id(cid, _save_new)
+        await state.set_state(SupportStates.waiting_for_problem_description) # Set state
+        await _safe_edit(call.message.chat.id, call.message.message_id, "Опишите проблему одним сообщением:")
 
-    async def _save_new(msg: types.Message):
+    @dp.message(SupportStates.waiting_for_problem_description)
+    async def _save_new(msg: types.Message, state: FSMContext):
         uid, text = msg.chat.id, (msg.text or "").strip()
         if not text:
-            return await bot.send_message(uid, "Пустое обращение не создано.",
-                                     reply_markup=main_menu_keyboard())
+            await state.clear()  # Important: clear state
+            return await bot.send_message(uid, "Пустое обращение не создано.", reply_markup=main_menu_keyboard())
 
         with SessionLocal() as s:
             tk = SupportTicket(user_id=uid, status="open")
-            s.add(tk); s.flush()               # получаем tk.id без закрытия сессии
+            s.add(tk)               # получаем tk.id без закрытия сессии
+            s.flush()
             ticket_id = tk.id
             s.add(SupportMessage(ticket_id=ticket_id, sender_id=uid, text=text))
             s.commit()
 
         await bot.send_message(ADMIN_SUPPORT_CHAT_ID, f"🆕 Тикет #{ticket_id} от {uid}:\n{text}")
-        return await bot.send_message(uid, f"Спасибо! Ваш тикет #{ticket_id} создан.",
-                         reply_markup=main_menu_keyboard())
+        await state.clear()  # Clear state after successful processing
+        return await bot.send_message(uid, f"Спасибо! Ваш тикет #{ticket_id} создан.", reply_markup=main_menu_keyboard())
 
     # ────────────────────────────────────────────────────────────────
     #   СПИСОК ТИКЕТОВ
     # ────────────────────────────────────────────────────────────────
-    async def _show_list(call: types.CallbackQuery, redraw=False):
-        uid, mid = call.from_user.id, call.message.message_id
+    @dp.callback_query(lambda c: c.data == f"st:list" or c.data == f"st:back")
+    async def _show_list(call: types.CallbackQuery):
+        uid, mid, redraw = call.from_user.id, call.message.message_id, call.data == f"st:back"
         with SessionLocal() as s:
             rows = (s.query(SupportTicket)
                       .filter_by(user_id=uid)
@@ -91,12 +101,14 @@ def register_support_handlers(bot: Bot, dp: Dispatcher):
                 await bot.answer_callback_query(call.id)
                 return await bot.send_message(uid, txt, reply_markup=main_menu_keyboard())
 
-        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
-        for t_id, st in tickets:
-            kb.add(types.InlineKeyboardButton(text=f"#{t_id} — {rus_status(st)}",
-                                              callback_data=f"st:view:{t_id}"))
-        kb.add(types.InlineKeyboardButton(text="❌ Закрыть", callback_data="delete_msg"))
-
+        buttons = [
+            [ types.InlineKeyboardButton(text=f"#{t_id} — {rus_status(st)}", callback_data=f"st:view:{t_id}") ]
+            for t_id, st in tickets
+        ]
+        buttons.append(
+            [ types.InlineKeyboardButton(text="❌ Закрыть", callback_data="delete_msg") ]
+        )
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
         if redraw:
             return await _safe_edit(uid, mid, "Ваши обращения:", reply_markup=kb)
         else:
@@ -107,59 +119,78 @@ def register_support_handlers(bot: Bot, dp: Dispatcher):
     # ────────────────────────────────────────────────────────────────
     #   КАРТОЧКА ТИКЕТА
     # ────────────────────────────────────────────────────────────────
-    async def _show_card(call: types.CallbackQuery, t_id: int):
+    view_route_prefix="st:view:"
+
+    @dp.callback_query(lambda c: c.data.startswith(view_route_prefix))
+    async def _view_card(call: types.CallbackQuery):
         uid, mid = call.from_user.id, call.message.message_id
-        tk, msgs = await _fetch_ticket(t_id, uid, call.id)
-        if tk is None: return
+        tk = await _fetch_ticket(call.id, call.data, uid, view_route_prefix)
+        if tk is not None:
+            await bot.answer_callback_query(call.id)
+            await _show_card(uid, mid, tk)
 
+    async def _show_card(user_id: int, message_id: int, tk: ResolvedTicket):
         body = "\n\n".join(
-            f"{'Админ' if sid != uid else 'Вы'} ({ts:%d.%m.%y %H:%M}):\n{txt}"
-            for sid, txt, ts in msgs
+            f"{'Админ' if msg.sender_id != user_id else 'Вы'} ({msg.created_at:%d.%m.%y %H:%M}):\n{msg.text}"
+            for msg in tk.msgs
         ) or "Сообщений пока нет."
-
-        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
-        if tk["status"] == "open":
-            kb.add(types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"st:reply:{t_id}"),
-                   types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"st:close:{t_id}"))
-        kb.add(types.InlineKeyboardButton(text="↩️ Назад", callback_data="st:back"))
-
-        await bot.answer_callback_query(call.id)
-        await _safe_edit(uid, mid, f"📄 Тикет #{t_id} — {rus_status(tk['status'])}\n\n{body}",
-                   reply_markup=kb)
+        buttons = []
+        if tk.status == "open":
+            buttons.append([
+                types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"st:reply:{tk.id}")
+            ])
+            buttons.append([
+                types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"st:close:{tk.id}")
+            ])
+        buttons.append([
+            types.InlineKeyboardButton(text="↩️ Назад", callback_data="st:back")
+        ])
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+        await _safe_edit(user_id, message_id, f"📄 Тикет #{tk.id} — {rus_status(tk.status)}\n\n{body}", reply_markup=kb)
 
     # ────────────────────────────────────────────────────────────────
     #   ЗАКРЫТИЕ ТИКЕТА
     # ────────────────────────────────────────────────────────────────
-    async def _close_ticket(call: types.CallbackQuery, t_id: int):
-        uid = call.from_user.id
-        tk, _ = await _fetch_ticket(t_id, uid, call.id)
-        if tk is None or tk["status"] == "closed":
-            return
+    close_route_prefix = "st:close:"
 
+    @dp.callback_query(lambda c: c.data.startswith(close_route_prefix))
+    async def _close_ticket(call: types.CallbackQuery):
+        uid, mid = call.from_user.id, call.message.message_id
+        tk = await _fetch_ticket(call.id, call.data, uid, close_route_prefix)
+        if tk is None:
+            return None
+        if tk.status == "closed":
+            return await bot.answer_callback_query(call.id, "Тикет уже закрыт.", show_alert=True)
         with SessionLocal() as s:
-            s.query(SupportTicket).filter_by(id=t_id, user_id=uid).update({"status": "closed"})
+            s.query(SupportTicket).filter_by(id=tk.id, user_id=uid).update({"status": "closed"})
             s.commit()
-
         await bot.answer_callback_query(call.id, "Тикет закрыт.")
-        await _show_card(call, t_id)
-        await bot.send_message(ADMIN_SUPPORT_CHAT_ID, f"⛔️ Пользователь {uid} закрыл тикет #{t_id}")
+        await bot.send_message(ADMIN_SUPPORT_CHAT_ID, f"⛔️ Пользователь {uid} закрыл тикет #{tk.id}")
+        return await _show_card(uid, mid, tk)
 
     # ────────────────────────────────────────────────────────────────
     #   ОТВЕТ В ТИКЕТ
     # ────────────────────────────────────────────────────────────────
-    async def _prep_reply(call: types.CallbackQuery, t_id: int):
-        uid = call.from_user.id
-        tk, _ = await _fetch_ticket(t_id, uid, call.id)
-        if tk is None or tk["status"] == "closed":
-            return
-        await bot.answer_callback_query(call.id)
-        await bot.send_message(uid, f"Введите сообщение для тикета #{t_id}:")
-        user_steps[uid]["reply_to"] = t_id
-        await bot.register_next_step_handler_by_chat_id(uid, _save_reply)
+    reply_route_prefix = "st:reply:"
 
-    async def _save_reply(msg: types.Message):
-        uid  = msg.chat.id
-        t_id: Optional[int] = user_steps[uid].pop("reply_to", None)
+    @dp.callback_query(lambda c: c.data.startswith(reply_route_prefix))
+    async def _prep_reply(call: types.CallbackQuery, state: FSMContext):
+        uid = call.from_user.id
+        tk = await _fetch_ticket(call.id, call.data, uid, reply_route_prefix)
+        if tk is None:
+            return None
+        if tk.status == "closed":
+            return await bot.answer_callback_query(call.id, "Тикет закрыт.", show_alert=True)
+        await bot.answer_callback_query(call.id)
+        await state.set_state(SupportStates.waiting_for_reply) # Set state
+        await state.update_data(tk_id=tk.id)
+        return await bot.send_message(uid, f"Введите сообщение для тикета #{tk.id}:")
+
+    @dp.message(SupportStates.waiting_for_reply)
+    async def _save_reply(msg: types.Message, state: FSMContext):
+        uid = msg.chat.id
+        data = await state.get_data()
+        t_id: Optional[int] = int(t_id_raw) if (t_id_raw := data.get("tk_id")) is not None else None
         if not t_id:
             return await bot.send_message(uid, "Нет выбранного тикета.")
 
@@ -177,23 +208,23 @@ def register_support_handlers(bot: Bot, dp: Dispatcher):
     # ────────────────────────────────────────────────────────────────
     #   УТИЛИТА: получаем тикет + сообщения (только простые типы)
     # ────────────────────────────────────────────────────────────────
-    async def _fetch_ticket(t_id: int, uid: int, cb_id: str):
+    async def _fetch_ticket(cb_id: str, call_data: str, uid: int, prefix: str) -> Optional[ResolvedTicket]:
+        t_id = int(call_data[prefix.__len__():call_data.__len__()])
         with SessionLocal() as s:
             t = s.query(SupportTicket).filter_by(id=t_id, user_id=uid).first()
             if not t:
                 if cb_id:
                     await bot.answer_callback_query(cb_id, "Тикет не найден.", show_alert=True)
-                return None, None
+                return None
 
-            tk_data = {"id": t.id, "status": t.status}
             msgs = [
-                (m.sender_id, m.text, m.created_at)
+                ResolvedTicketMessage(m.sender_id, m.text, m.created_at)
                 for m in s.query(SupportMessage)
                           .filter_by(ticket_id=t.id)
                           .order_by(SupportMessage.created_at.asc())
                           .all()
             ]
-        return tk_data, msgs
+        return ResolvedTicket(id=t.id, status=t.status, msgs=msgs)
 
     # ────────────────────────────────────────────────────────────────
     #   Кнопка «удалить сообщение»

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 
 from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
 from config import ADMIN_IDS, MARKETING_GROUP_ID
 from database import SessionLocal, User, Ad, ChatGroup, AdFeedback, Sale, TopUp, Withdrawal
@@ -19,11 +20,11 @@ def is_admin(user_id: int) -> bool:
 
 
 def register_admin_handlers(bot: Bot, dp: Dispatcher):
-    @dp.message(commands=["admin"])
+    @dp.message(Command("admin"))
     async def admin_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return await bot.send_message(message.chat.id, "Нет прав для доступа к админ-меню.")
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Управление балансом", "Последние заказы")
         kb.row("Рассылка", "Забанить/Разбанить")
         kb.row("Редактировать объявления", "Удалить объявление")  # <-- добавили здесь
@@ -35,7 +36,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            УДАЛИТЬ (ДЕАКТИВИРОВАТЬ) ОБЪЯВЛЕНИЕ
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Удалить объявление")
+    @dp.message(lambda m: m.text == "Удалить объявление")
     async def admin_deactivate_ad(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -66,9 +67,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #      Одобрить / Отклонить продление
     # ------------------------------------------------------------------------
-    @dp.callback_query(
-        func=lambda c: c.data.startswith("approve_ext_") or c.data.startswith("reject_ext_")
-    )
+    @dp.callback_query(lambda c: c.data.startswith("approve_ext_") or c.data.startswith("reject_ext_"))
     async def handle_extension_request(call: types.CallbackQuery):
         admin_id = call.from_user.id
         if not is_admin(admin_id):
@@ -102,7 +101,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            УПРАВЛЕНИЕ БАЛАНСОМ
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Управление балансом")
+    @dp.message(lambda m: m.text == "Управление балансом")
     async def admin_balance(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -138,7 +137,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            ПОСЛЕДНИЕ ЗАКАЗЫ
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Последние заказы")
+    @dp.message(lambda m: m.text == "Последние заказы")
     async def admin_orders(message: types.Message):
         if not is_admin(message.chat.id):
             return None
@@ -160,7 +159,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            РАССЫЛКА
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Рассылка")
+    @dp.message(lambda m: m.text == "Рассылка")
     async def admin_broadcast(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -182,7 +181,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            ЗАБАНИТЬ/РАЗБАНИТЬ (из меню)
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Забанить/Разбанить")
+    @dp.message(lambda m: m.text == "Забанить/Разбанить")
     async def admin_ban_unban(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -216,7 +215,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            РЕДАКТИРОВАТЬ ОБЪЯВЛЕНИЯ
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Редактировать объявления")
+    @dp.message(lambda m: m.text == "Редактировать объявления")
     async def admin_edit_ads(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -243,17 +242,17 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            УПРАВЛЕНИЕ ЧАТАМИ
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Управление чатами")
+    @dp.message(lambda m: m.text == "Управление чатами")
     async def admin_manage_chats(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Добавить чат", "Список чатов", "Удалить чат")
         kb.row("Загрузить чаты (Excel/CSV)")
         kb.row("Главное меню")
         await bot.send_message(message.chat.id, "Управление чатами:", reply_markup=kb)
 
-    @dp.message(func=lambda m: m.text == "Добавить чат")
+    @dp.message(lambda m: m.text == "Добавить чат")
     async def admin_add_chat(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -283,7 +282,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             session.commit()
         return await bot.send_message(message.chat.id, f"Чат '{title}' добавлен!")
 
-    @dp.message(func=lambda m: m.text == "Список чатов")
+    @dp.message(lambda m: m.text == "Список чатов")
     async def admin_list_chats(message: types.Message):
         if not is_admin(message.chat.id):
             return None
@@ -334,7 +333,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         await send_in_chunks(message.chat.id, result_text)
         return await bot.send_message(message.chat.id, "Конец списка.")
 
-    @dp.message(func=lambda m: m.text == "Удалить чат")
+    @dp.message(lambda m: m.text == "Удалить чат")
     async def admin_delete_chat(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -354,7 +353,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             session.commit()
         return await bot.send_message(message.chat.id, "Чат удалён.")
 
-    @dp.message(func=lambda m: m.text == "Загрузить чаты (Excel/CSV)")
+    @dp.message(lambda m: m.text == "Загрузить чаты (Excel/CSV)")
     async def admin_add_chats_from_excel_csv(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -637,7 +636,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            МОДЕРАЦИЯ ОБЪЯВЛЕНИЙ (approve/reject/edit/publish)
     # ------------------------------------------------------------------------
-    @dp.callback_query(func=lambda call:
+    @dp.callback_query(lambda call:
         call.data.startswith("approve_ad_") or
         call.data.startswith("reject_ad_") or
         call.data.startswith("edit_ad_") or
@@ -725,7 +724,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            ОДОБРИТЬ/ОТКЛОНИТЬ ПОПОЛНЕНИЕ
     # ------------------------------------------------------------------------
     @dp.callback_query(
-        func=lambda call: call.data.startswith("approve_topup_") or call.data.startswith("reject_topup_")
+        lambda call: call.data.startswith("approve_topup_") or call.data.startswith("reject_topup_")
     )
     async def handle_topup_approval(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
@@ -801,7 +800,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            МОДЕРАЦИЯ ОТЗЫВОВ (approve/reject)
     # ------------------------------------------------------------------------
     @dp.callback_query(
-        func=lambda call: call.data.startswith("approve_feedback_") or call.data.startswith("reject_feedback_")
+        lambda call: call.data.startswith("approve_feedback_") or call.data.startswith("reject_feedback_")
     )
     async def handle_feedback_moderation(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
@@ -835,7 +834,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            ОДОБРИТЬ / ОТКЛОНИТЬ ВЫВОД СРЕДСТВ
     # ------------------------------------------------------------------------
     @dp.callback_query(
-        func=lambda call: call.data.startswith("approve_withdraw_") or call.data.startswith("reject_withdraw_")
+        lambda call: call.data.startswith("approve_withdraw_") or call.data.startswith("reject_withdraw_")
     )
     async def handle_withdraw_approval(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
@@ -901,15 +900,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            УПРАВЛЕНИЕ ПОДДЕРЖКОЙ (ТИКЕТАМИ)
     # ------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Управление поддержкой")
+    @dp.message(lambda m: m.text == "Управление поддержкой")
     async def admin_support_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Список открытых тикетов", "Главное меню")
         await bot.send_message(message.chat.id, "Управление тикетами поддержки:", reply_markup=kb)
 
-    @dp.message(func=lambda m: m.text == "Список открытых тикетов")
+    @dp.message(lambda m: m.text == "Список открытых тикетов")
     async def admin_list_tickets(message: types.Message):
         if not is_admin(message.chat.id):
             return None
@@ -918,7 +917,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             if not tickets:
                 return await bot.send_message(message.chat.id, "Нет открытых тикетов.")
 
-            kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+            kb = types.InlineKeyboardMarkup(row_width=1)
             for t in tickets:
                 btn_txt = f"Тикет #{t.id} от пользователя {t.user_id}"
                 kb.add(types.InlineKeyboardButton(text=btn_txt, callback_data=f"admin_support_view_{t.id}"))
@@ -927,7 +926,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------
     #   просмотр тикета (админ)
     # ------------------------------------------------------------------
-    @dp.callback_query(func=lambda c: c.data.startswith("admin_support_view_"))
+    @dp.callback_query(lambda c: c.data.startswith("admin_support_view_"))
     async def admin_support_view_ticket(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
             return await bot.answer_callback_query(call.id, "Нет прав.")
@@ -948,7 +947,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                 for m in ticket.messages
             ) or "Сообщений пока нет."
 
-        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=1)
         kb.add(types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"admin_support_reply_{t_id}"),
                types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"admin_support_close_{t_id}"))
 
@@ -961,7 +960,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------
     #   ответ администратора
     # ------------------------------------------------------------------
-    @dp.callback_query(func=lambda c: c.data.startswith("admin_support_reply_"))
+    @dp.callback_query(lambda c: c.data.startswith("admin_support_reply_"))
     async def admin_support_reply_ticket(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
             return await bot.answer_callback_query(call.id)
@@ -1038,7 +1037,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ------------------------------------------------------------------------
     #            ОБРАБОТКА ЖАЛОБ (complaint_msg_seller_, complaint_del_ad_, complaint_ban_)
     # ------------------------------------------------------------------------
-    @dp.callback_query(func=lambda call:
+    @dp.callback_query(lambda call:
         call.data.startswith("complaint_msg_seller_") or
         call.data.startswith("complaint_del_ad_") or
         call.data.startswith("complaint_ban_")
@@ -1155,7 +1154,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     # ============================
     #    Редактировать профиль пользователя
     # ============================
-    @dp.message(func=lambda m: m.text == "Редактировать профиль пользователя")
+    @dp.message(lambda m: m.text == "Редактировать профиль пользователя")
     async def edit_profile_user_start(message: types.Message):
         if not is_admin(message.chat.id):
             return
@@ -1215,7 +1214,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
 
         return await bot.send_message(chat_id, f"Поле {field.upper()} пользователя #{user_id} обновлено на: {new_val}")
 
-    @dp.callback_query(func=lambda call:
+    @dp.callback_query(lambda call:
     call.data.startswith("approve_ext_") or call.data.startswith("reject_ext_")             )
     async def handle_extension_request(call: types.CallbackQuery):
         """

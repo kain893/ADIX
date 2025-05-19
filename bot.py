@@ -5,8 +5,9 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart
 
 # Импорт обработчиков добавления объявлений (Формат №1 и Формат №2)
 import add_ads
@@ -91,7 +92,7 @@ def scheduled_post_worker_sync():
 bg_thread = threading.Thread(target=scheduled_post_worker_sync, daemon=True)
 bg_thread.start()
 
-@dp.message(commands=["start"])
+@dp.message(CommandStart())
 async def start_handler(message: types.Message):
     """
     Регистрируем (или обновляем) пользователя и выводим приветствие
@@ -114,16 +115,17 @@ async def start_handler(message: types.Message):
         reply_markup=main_menu_keyboard()
     )
 
-    kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
-    kb.add(
-        types.InlineKeyboardButton(
-            text="📄 Пользовательское соглашение ADIX",
-            url="https://telegra.ph/Polzovatelskoe-soglashenie-03-25-9"
-        ),
-        types.InlineKeyboardButton(
-            text="💬 Соглашение Чатов Биржи ADIX",
-            url="https://telegra.ph/Obshchie-polozheniya-03-25"
-        )
+    kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [ types.InlineKeyboardButton(
+                text="📄 Пользовательское соглашение ADIX",
+                url="https://telegra.ph/Polzovatelskoe-soglashenie-03-25-9"
+            ) ],
+            [ types.InlineKeyboardButton(
+                text="💬 Соглашение Чатов Биржи ADIX",
+                url="https://telegra.ph/Obshchie-polozheniya-03-25"
+            ) ]
+        ]
     )
     await bot.send_message(
         message.chat.id,
@@ -133,10 +135,7 @@ async def start_handler(message: types.Message):
     )
 
 # ------------------- Удаляем сообщения из групп/супергрупп, если нет /start (пункты 1 и 2) -------------------
-@dp.message(
-    content_types=["text","photo","sticker","video","document","voice","animation"],
-    func=lambda m: m.chat.type in ["group","supergroup"]
-)
+@dp.message(F.chat.type.in_({ "group", "supergroup"}), F.content_type.in_({ "text", "photo", "sticker", "video", "document", "voice", "animation" }))
 async def guard_group_messages(message: types.Message):
     """
     Если пользователь не зарегистрирован в боте (не делал /start), то удаляем его сообщение.
@@ -168,7 +167,7 @@ async def guard_group_messages(message: types.Message):
         # 3) Отправляем новое предупреждение
         # Кнопка «↩️ Перейти в бота»
         bot_username = (await bot.get_me()).username
-        inline_kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        inline_kb = types.InlineKeyboardMarkup()
         inline_kb.add(
             types.InlineKeyboardButton(
                 text="↩️ Перейти в бота / Принять соглашение",
@@ -214,7 +213,7 @@ async def guard_group_messages(message: types.Message):
 
 # ========================= Сделки (покупка/продажа) =========================
 
-@dp.callback_query(func=lambda call: call.data.startswith("buy_ad_"))
+@dp.callback_query(lambda call: call.data.startswith("buy_ad_"))
 async def handle_buy_ad(call: types.CallbackQuery):
     """
     Пользователь нажал «Купить».
@@ -237,7 +236,7 @@ async def handle_buy_ad(call: types.CallbackQuery):
         )
 
     # Если это ЛС, уточняем
-    kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+    kb = types.InlineKeyboardMarkup()
     kb.add(
         types.InlineKeyboardButton(text="Подтвердить покупку", callback_data=f"confirm_buy_ad_{ad_id}"),
         types.InlineKeyboardButton(text="Отмена", callback_data=f"cancel_buy_ad_{ad_id}")
@@ -250,7 +249,7 @@ async def handle_buy_ad(call: types.CallbackQuery):
     )
 
 
-@dp.callback_query(func=lambda call: call.data.startswith("confirm_buy_ad_") or call.data.startswith("cancel_buy_ad_"))
+@dp.callback_query(lambda call: call.data.startswith("confirm_buy_ad_") or call.data.startswith("cancel_buy_ad_"))
 async def handle_confirm_buy_ad(call: types.CallbackQuery):
     """
     Обрабатываем «Подтвердить покупку» / «Отменить покупку».
@@ -289,7 +288,7 @@ async def handle_confirm_buy_ad(call: types.CallbackQuery):
         result = reserve_funds_for_sale(bot, buyer_id, seller_id, ad_obj)
         if result == "ok":
             # Сделка -> pending
-            kb_buyer = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+            kb_buyer = types.InlineKeyboardMarkup()
             kb_buyer.add(
                 types.InlineKeyboardButton(text="Принять сделку", callback_data=f"confirm_deal_{ad_obj.id}"),
                 types.InlineKeyboardButton(text="Отклонить сделку", callback_data=f"cancel_deal_{ad_obj.id}")
@@ -314,7 +313,7 @@ async def handle_confirm_buy_ad(call: types.CallbackQuery):
             # Ошибка при резервировании
             return await bot.answer_callback_query(call.id, result, show_alert=True)
 
-@dp.callback_query(func=lambda call: call.data.startswith("confirm_deal_") or call.data.startswith("cancel_deal_"))
+@dp.callback_query(lambda call: call.data.startswith("confirm_deal_") or call.data.startswith("cancel_deal_"))
 async def handle_deal_confirmation(call: types.CallbackQuery):
     """
     «Принять сделку» -> деньги уходят продавцу
@@ -383,7 +382,7 @@ async def handle_deal_confirmation(call: types.CallbackQuery):
                 f"Сделка #{sale_obj.id} отменена, {sale_obj.amount} руб. возвращены на ваш баланс."
             )
 
-@dp.callback_query(func=lambda call: call.data.startswith("details_ad_"))
+@dp.callback_query(lambda call: call.data.startswith("details_ad_"))
 async def handle_details_ad(call: types.CallbackQuery):
     """
     Кнопка «Подробнее» по объявлению
@@ -413,7 +412,7 @@ async def handle_details_ad(call: types.CallbackQuery):
             "Выберите действие:"
         )
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         buy_btn_text = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
         kb.add(types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_obj.id}"))
         kb.add(types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
@@ -425,11 +424,7 @@ async def handle_details_ad(call: types.CallbackQuery):
 #------------------------------
 #DELETE MESSAGES
 #------------------------------
-@dp.message(
-    content_types=["text", "photo", "sticker", "video",
-                   "document", "voice", "animation"],
-    func=lambda m: m.chat.type in ["group", "supergroup"]
-)
+@dp.message(F.chat.type.in_({ "group", "supergroup"}), F.content_type.in_({ "text", "photo", "sticker", "video", "document", "voice", "animation" }))
 async def guard_group_messages(message: types.Message):
     """
     • Пропускаем администраторов/создателя группы и сообщения от имени канала.
@@ -483,7 +478,7 @@ async def guard_group_messages(message: types.Message):
 
     # 3) формируем новое предупреждение
     bot_username = (await bot.get_me()).username
-    kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+    kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
         types.InlineKeyboardButton(
             text="↩️ Перейти в бота / Принять соглашение",

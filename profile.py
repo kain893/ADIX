@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 
 from config import ADMIN_IDS
 from database import SessionLocal, User, Ad, TopUp, Withdrawal, AdChat, AdChatMessage, ChatGroup
@@ -17,20 +17,20 @@ ADMIN_WITHDRAW_CHAT_ID = -1002586768630 # вывод
 pending_profile_changes = {}         # change_id -> {"user_id": …, "field": …, "value": …}
 def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # ------------------- Главное меню / Личный кабинет -------------------
-    @dp.message(func=lambda m: m.text == "📜Личный кабинет")
+    @dp.message(lambda m: m.text == "📜Личный кабинет")
     async def cabinet_menu(message: types.Message):
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Мои объявления", "Настройки профиля")
         kb.row("Пополнить баланс", "Вывод баланса")
         kb.row("🔙 Главное меню")
         await bot.send_message(message.chat.id, "Личный кабинет:", reply_markup=kb)
 
-    @dp.message(func=lambda m: m.text == "🔙 Главное меню")
+    @dp.message(lambda m: m.text == "🔙 Главное меню")
     async def back_to_main(message: types.Message):
         await bot.send_message(message.chat.id, "Главное меню:", reply_markup=main_menu_keyboard())
 
     # ------------------- Мои объявления -------------------
-    @dp.message(func=lambda m: m.text == "Мои объявления")
+    @dp.message(lambda m: m.text == "Мои объявления")
     async def my_ads(message: types.Message):
         user_id = message.chat.id
         with SessionLocal() as sess:
@@ -39,7 +39,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         if not ads:
             return await bot.send_message(user_id, "У вас нет объявлений.", reply_markup=main_menu_keyboard())
 
-        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=1)
         for ad in ads:
             status_ru = rus_status(ad.status)
             note = "" if ad.is_active else " / Неактивно"
@@ -51,7 +51,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ---------- Просмотр одного объявления и кнопка «Продлить» ----------
     @dp.callback_query(
-        func=lambda c: c.data.startswith("profile_my_ad_") or c.data == "profile_myads_close"
+        lambda c: c.data.startswith("profile_my_ad_") or c.data == "profile_myads_close"
     )
     async def handle_profile_my_ads(call: types.CallbackQuery):
         user_id = call.from_user.id
@@ -86,7 +86,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             + ("⛔️ Срок истёк!\n" if expired else f"Осталось дней: {days_left}\n")
         )
 
-        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=1)
         # кнопка продления, если уже неактивно, срок вышел или осталось <5 дней
         if not ad.is_active or expired or days_left < 5:
             kb.add(types.InlineKeyboardButton(
@@ -101,14 +101,14 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await bot.answer_callback_query(call.id)
 
     # ------------------- «Назад» к списку объявлений -------------------
-    @dp.callback_query(func=lambda c: c.data == "profile_back_to_ads")
+    @dp.callback_query(lambda c: c.data == "profile_back_to_ads")
     async def back_to_ads(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id)
         # просто вызываем логику «Мои объявления»
         await my_ads(call.message)
 
     # ------------------- Запрос на продление -------------------
-    @dp.callback_query(func=lambda c: c.data.startswith("extend_ad_"))
+    @dp.callback_query(lambda c: c.data.startswith("extend_ad_"))
     async def extend_ad_callback(call: types.CallbackQuery):
         user_id = call.from_user.id
         ad_id   = int(call.data.split("_")[-1])
@@ -120,7 +120,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
         # шлём заявку админу
-        kb_admin = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb_admin = types.InlineKeyboardMarkup(row_width=2)
         kb_admin.add(
             types.InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_ext_{ad_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_ext_{ad_id}")
@@ -135,7 +135,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ------------------- Обработчик одобрения/отклонения -------------------
     @dp.callback_query(
-        func=lambda c: c.data.startswith("approve_ext_") or c.data.startswith("reject_ext_")
+        lambda c: c.data.startswith("approve_ext_") or c.data.startswith("reject_ext_")
     )
     async def handle_extension_decision(call: types.CallbackQuery):
         admin_id = call.from_user.id
@@ -175,7 +175,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if not ads_list:
                 return await bot.send_message(chat_id, "У вас нет объявлений.", reply_markup=main_menu_keyboard())
 
-            kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+            kb = types.InlineKeyboardMarkup(row_width=1)
             for ad_obj in ads_list:
                 btn_text = f"Объявление #{ad_obj.id} ({rus_status(ad_obj.status)})"
                 callback_data = f"profile_my_ad_{ad_obj.id}"
@@ -185,7 +185,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             return await bot.send_message(chat_id, "Ваши объявления:", reply_markup=kb)
 
     # ---------- продление на 30 дней --------------------
-    @dp.callback_query(func=lambda c: c.data.startswith("extend_ad_"))
+    @dp.callback_query(lambda c: c.data.startswith("extend_ad_"))
     async def extend_ad_callback(call: types.CallbackQuery):
         """
         Пользователь запросил бесплатное продление на 30 дней.
@@ -201,7 +201,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
         # Формируем запрос для админа
-        kb_admin = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb_admin = types.InlineKeyboardMarkup(row_width=2)
         kb_admin.add(
             types.InlineKeyboardButton(text="✅ Одобрить продление", callback_data=f"approve_ext_{ad_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить продление", callback_data=f"reject_ext_{ad_id}")
@@ -220,7 +220,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         )
 
     # ------------------- Разместить существующее объявление на бирже -------------------
-    @dp.callback_query(func=lambda call: call.data.startswith("profile_myad_exchange_"))
+    @dp.callback_query(lambda call: call.data.startswith("profile_myad_exchange_"))
     async def profile_myad_exchange_callback(call: types.CallbackQuery):
         """
         Запуск "мини-флоу" для существующего объявления, чтобы перевести его в Формат2.
@@ -271,7 +271,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             # ФИО
             if not user.full_name:
                 user_steps[chat_id]["need_fio"] = True
-                kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+                kb = types.InlineKeyboardMarkup()
                 kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow"))
                 await bot.send_message(chat_id, "Укажите ФИО (например, Иванов Иван Иванович):", reply_markup=kb)
                 await bot.register_next_step_handler_by_chat_id(chat_id, process_exchange_fio)
@@ -280,7 +280,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             # Компания
             if not user.company_name:
                 user_steps[chat_id]["need_company"] = True
-                kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+                kb = types.InlineKeyboardMarkup()
                 kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="exchange_company_skip"))
                 kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow"))
                 await bot.send_message(chat_id, "Укажите название компании (если есть) или пропустите:", reply_markup=kb)
@@ -291,7 +291,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if not user.inn:
                 user_steps[chat_id]["need_inn"] = True
                 digits_needed = 13 if user.company_name else 12
-                kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+                kb = types.InlineKeyboardMarkup()
                 kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow"))
                 await bot.send_message(
                     chat_id,
@@ -317,7 +317,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 session.commit()
         await check_and_ask_missing_profile_data(chat_id)
 
-    @dp.callback_query(func=lambda call: call.data == "exchange_company_skip")
+    @dp.callback_query(lambda call: call.data == "exchange_company_skip")
     async def exchange_company_skip(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
@@ -356,7 +356,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             session.commit()
         return await check_and_ask_missing_profile_data(chat_id)
 
-    @dp.callback_query(func=lambda call: call.data == "cancel_exchange_flow")
+    @dp.callback_query(lambda call: call.data == "cancel_exchange_flow")
     async def cancel_exchange_flow(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
@@ -367,14 +367,14 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ---- Выбор региона и чата ----------------------------------------
     async def ask_exchange_region(chat_id):
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton(text="Москва", callback_data="exchg_region_moscow"))
         kb.add(types.InlineKeyboardButton(text="Московская область", callback_data="exchg_region_mo"))
         kb.add(types.InlineKeyboardButton(text="Города РФ", callback_data="exchg_region_rf"))
         kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow"))
         await bot.send_message(chat_id, "Выберите регион для размещения:", reply_markup=kb)
 
-    @dp.callback_query(func=lambda call: call.data in ["exchg_region_moscow", "exchg_region_mo", "exchg_region_rf"])
+    @dp.callback_query(lambda call: call.data in ["exchg_region_moscow", "exchg_region_mo", "exchg_region_rf"])
     async def handle_exchange_region_choice(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
@@ -431,7 +431,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         end_i = min(start_i + page_size, len(chats))
         sublist = chats[start_i:end_i]
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         for c in sublist:
             btn_text = f"{c.title} (Цена: {c.price} руб.)"
             cb_data = f"exchg_pickchat_{c.id}"
@@ -449,7 +449,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         await bot.send_message(chat_id, f"Выберите чат для размещения (стр. {page + 1}):", reply_markup=kb)
 
-    @dp.callback_query(func=lambda call: call.data in ["exchg_chatpage_prev", "exchg_chatpage_next"])
+    @dp.callback_query(lambda call: call.data in ["exchg_chatpage_prev", "exchg_chatpage_next"])
     async def handle_exchg_chatpage_nav(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
@@ -464,7 +464,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         await bot.answer_callback_query(call.id)
         await show_exchange_chats_page(chat_id)
 
-    @dp.callback_query(func=lambda call: call.data.startswith("exchg_pickchat_"))
+    @dp.callback_query(lambda call: call.data.startswith("exchg_pickchat_"))
     async def handle_exchg_pick_chat(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
@@ -489,7 +489,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await ask_exchange_post_count(chat_id)
 
     async def ask_exchange_post_count(chat_id):
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         kb.add(
             types.InlineKeyboardButton(text="1 размещение", callback_data="exchg_cnt_1"),
             types.InlineKeyboardButton(text="5 размещений", callback_data="exchg_cnt_5")
@@ -501,7 +501,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow"))
         await bot.send_message(chat_id, "Сколько размещений хотите оплатить?", reply_markup=kb)
 
-    @dp.callback_query(func=lambda call: call.data.startswith("exchg_cnt_"))
+    @dp.callback_query(lambda call: call.data.startswith("exchg_cnt_"))
     async def handle_exchg_cnt(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
@@ -535,7 +535,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         user_steps[chat_id]["total_sum"] = total_sum
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         kb.add(
             types.InlineKeyboardButton(text="Оплатить", callback_data="exchg_pay_now"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow")
@@ -547,7 +547,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         )
         await bot.send_message(chat_id, text, reply_markup=kb)
 
-    @dp.callback_query(func=lambda call: call.data == "exchg_pay_now")
+    @dp.callback_query(lambda call: call.data == "exchg_pay_now")
     async def handle_exchg_pay_now(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
@@ -573,7 +573,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     async def ask_exchange_marking_fee(chat_id):
         marking_fee = 50.0
         user_steps[chat_id]["exchg_marking_fee"] = marking_fee
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         kb.add(
             types.InlineKeyboardButton(text="Оплатить маркировку", callback_data="exchg_pay_marking"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow")
@@ -584,7 +584,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             reply_markup=kb
         )
 
-    @dp.callback_query(func=lambda call: call.data == "exchg_pay_marking")
+    @dp.callback_query(lambda call: call.data == "exchg_pay_marking")
     async def handle_exchg_pay_marking(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
@@ -650,7 +650,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 "Требуется проверка!"
             )
 
-            kb_mod = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+            kb_mod = types.InlineKeyboardMarkup()
             kb_mod.add(
                 types.InlineKeyboardButton(text="Принять", callback_data=f"approve_ad_{ad_obj.id}"),
                 types.InlineKeyboardButton(text="Отклонить", callback_data=f"reject_ad_{ad_obj.id}")
@@ -671,7 +671,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         user_steps.pop(chat_id, None)
 
     # ---------------- Настройки профиля + изменение реквизитов -----------------
-    @dp.message(func=lambda m: m.text == "Настройки профиля")
+    @dp.message(lambda m: m.text == "Настройки профиля")
     async def profile_settings(message: types.Message):
         user_id = message.chat.id
         with SessionLocal() as sess:
@@ -692,7 +692,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 f"<b>Компания</b>: {user.company_name or '—'}"
             )
 
-        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=1)
         kb.add(
             types.InlineKeyboardButton(
                 text="🖊 Изменить ФИО" if user.full_name else "➕ Добавить ФИО",
@@ -711,14 +711,14 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         return await bot.send_message(user_id, txt, parse_mode="HTML", reply_markup=kb)
 
-    @dp.callback_query(func=lambda c: c.data == "back_to_main")
+    @dp.callback_query(lambda c: c.data == "back_to_main")
     async def back_from_profile(call: types.CallbackQuery):
         await bot.delete_message(call.message.chat.id, call.message.message_id)
         await bot.send_message(call.message.chat.id, "Главное меню:", reply_markup=main_menu_keyboard())
         await bot.answer_callback_query(call.id)
 
     # ---------- шаг 1: пользователь хочет изменить поле ----------
-    @dp.callback_query(func=lambda c: c.data.startswith("edit_profile_"))
+    @dp.callback_query(lambda c: c.data.startswith("edit_profile_"))
     async def ask_new_profile_value(call: types.CallbackQuery):
         field = call.data.replace("edit_profile_", "")  # fio / inn / company
         user_steps[call.from_user.id] = {"edit_field": field}
@@ -752,7 +752,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         nice_name = {"fio": "ФИО", "inn": "ИНН", "company": "компания"}[field]
 
         # отправляем админу
-        kb_admin = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb_admin = types.InlineKeyboardMarkup(row_width=2)
         kb_admin.add(
             types.InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_profile_{change_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_profile_{change_id}")
@@ -771,7 +771,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return None
 
     # ---------- шаг 3: админ одобряет / отклоняет ----------
-    @dp.callback_query(func=lambda c: c.data.startswith(("approve_profile_", "reject_profile_")))
+    @dp.callback_query(lambda c: c.data.startswith(("approve_profile_", "reject_profile_")))
     async def admin_profile_decision(call: types.CallbackQuery):
         approve = call.data.startswith("approve_profile_")
         change_id = int(call.data.split("_")[-1])
@@ -821,7 +821,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # 6. админ жмёт «Одобрить / Отклонить» (коллбэки были реализованы ранее)
 
     # -----------------------------------------------------------------------------
-    @dp.message(func=lambda m: m.text == "Пополнить баланс")
+    @dp.message(lambda m: m.text == "Пополнить баланс")
     async def add_balance(message: types.Message):
         msg = await bot.send_message(
             message.chat.id,
@@ -846,7 +846,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         amount = user_steps[chat_id]["topup"]["amount"]
         tmp_id = str(int(datetime.now().timestamp()))
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton(text="Сбер", callback_data=f"topup_card_sber_{tmp_id}"),
                types.InlineKeyboardButton(text="Тинькофф", callback_data=f"topup_card_tnk_{tmp_id}"))
         kb.add(types.InlineKeyboardButton(text="Альфа‑Банк", callback_data=f"topup_card_alfa_{tmp_id}"),
@@ -860,7 +860,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         )
 
     # ---------- шаг 1: пользователь выбрал карту ----------
-    @dp.callback_query(func=lambda c: c.data.startswith("topup_card_"))
+    @dp.callback_query(lambda c: c.data.startswith("topup_card_"))
     async def handle_choose_card(call: types.CallbackQuery):
         chat_id = call.from_user.id
         card_type, tmp_id = call.data.split("_")[2:]  # sber / tnk / alfa
@@ -889,10 +889,9 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await bot.answer_callback_query(call.id)
 
     # ---------- шаг 2: ждём фото/док с чеком ----------
-    @dp.message(content_types=["photo", "document"],
-                         func=lambda m: m.chat.id in user_steps
-                                        and "topup" in user_steps[m.chat.id]
-                                        and "receipt_file_id" not in user_steps[m.chat.id]["topup"])
+    @dp.message(lambda m: m.chat.id in user_steps and "topup" in user_steps[m.chat.id]
+                          and "receipt_file_id" not in user_steps[m.chat.id]["topup"],
+                F.content_type.in_({ "photo", "document" }))
     async def receive_topup_receipt(message: types.Message):
         uid = message.chat.id
         flow = user_steps[uid]["topup"]
@@ -905,7 +904,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         flow["receipt_file_id"] = file_id
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         kb.add(
             types.InlineKeyboardButton(text="✅ Подтвердить перевод", callback_data=f"topup_confirm_{flow['tmp_id']}"),
             types.InlineKeyboardButton(text="❌ Отменить", callback_data=f"topup_cancel_{flow['tmp_id']}")
@@ -916,7 +915,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                                "или «Отменить».", reply_markup=kb)
 
     # ---------- шаг 3: подтверждение / отмена ----------
-    @dp.callback_query(func=lambda c: c.data.startswith(("topup_confirm_", "topup_cancel_")))
+    @dp.callback_query(lambda c: c.data.startswith(("topup_confirm_", "topup_cancel_")))
     async def finish_topup_flow(call: types.CallbackQuery):
         uid = call.from_user.id
         flow = user_steps.get(uid, {}).get("topup")
@@ -962,7 +961,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             f"Система: {flow['card_system']}\n"
             f"Карта: <code>{flow['card_number']}</code>"
         )
-        kb_admin = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb_admin = types.InlineKeyboardMarkup(row_width=2)
         kb_admin.add(
             types.InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_topup_{topup_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_topup_{topup_id}")
@@ -981,7 +980,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ===================== ВЫВОД БАЛАНСА =====================
 
-    @dp.message(func=lambda m: m.text == "Вывод баланса")
+    @dp.message(lambda m: m.text == "Вывод баланса")
     async def withdraw_balance_step1(message: types.Message):
         """
         Шаг 1 — спрашиваем сумму.
@@ -1077,7 +1076,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             f"Карта/реквизиты: <code>{card}</code>"
         )
 
-        kb_admin = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb_admin = types.InlineKeyboardMarkup()
         kb_admin.add(
             types.InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_withdraw_{wd_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_withdraw_{wd_id}")
@@ -1093,7 +1092,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return None
 
     # ------------------- Выложить на БИРЖЕ (Формат2 напрямую) -------------------
-    @dp.message(func=lambda m: m.text == "Выложить на БИРЖЕ ADIX")
+    @dp.message(lambda m: m.text == "Выложить на БИРЖЕ ADIX")
     async def place_on_adix_exchange(message: types.Message):
         """
         Прямой запуск Формата2 (биржа) через add_ads.py
@@ -1102,7 +1101,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         await start_format2_flow_direct(bot, message, user_steps)
 
     # ------------------- Чаты -------------------
-    @dp.message(func=lambda m: m.text == "Чаты")
+    @dp.message(lambda m: m.text == "Чаты")
     async def show_user_chats(message: types.Message):
         user_id = message.chat.id
         with SessionLocal() as session:
@@ -1113,7 +1112,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if not chats:
                 return await bot.send_message(user_id, "У вас нет активных чатов.")
 
-            kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+            kb = types.InlineKeyboardMarkup(row_width=1)
             for ch in chats:
                 role = "продавец" if ch.seller_id == user_id else "покупатель"
                 other_id = ch.seller_id if ch.buyer_id == user_id else ch.buyer_id
@@ -1131,7 +1130,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             return None
 
     # ------------------- открыть выбранный чат -------------------
-    @dp.callback_query(func=lambda call: call.data.startswith("open_chat_"))
+    @dp.callback_query(lambda call: call.data.startswith("open_chat_"))
     async def open_chat_callback(call: types.CallbackQuery):
         """
         Показывает историю диалога и даёт кнопки «✏️ Написать» / «🔒 Закрыть чат».
@@ -1170,7 +1169,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 text_block = "Сообщений пока нет."
 
         # Кнопки управления чат‑диалогом
-        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
             types.InlineKeyboardButton(text="✏️ Написать", callback_data=f"chat_write_{chat_db_id}"),
             types.InlineKeyboardButton(text="🔒 Закрыть чат", callback_data=f"chat_close_{chat_db_id}")
@@ -1184,7 +1183,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         )
         return await bot.answer_callback_query(call.id)
 
-    @dp.callback_query(func=lambda call: call.data.startswith("chat_write_"))
+    @dp.callback_query(lambda call: call.data.startswith("chat_write_"))
     async def chat_write_callback(call: types.CallbackQuery):
         user_id = call.from_user.id
         ch_id_str = call.data.replace("chat_write_", "")
@@ -1236,7 +1235,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             other_id = chat.seller_id if user_id == chat.buyer_id else chat.buyer_id
 
         # клавиатура для ответа
-        kb_reply = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+        kb_reply = types.InlineKeyboardMarkup(row_width=1)
         kb_reply.add(
             types.InlineKeyboardButton(text="💬 Открыть чат", callback_data=f"open_chat_{ch_id}"),
             types.InlineKeyboardButton(text="✏️ Ответить", callback_data=f"chat_write_{ch_id}")
@@ -1250,7 +1249,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         user_steps.pop(user_id, None)
         return None
 
-    @dp.callback_query(func=lambda call: call.data.startswith("chat_close_"))
+    @dp.callback_query(lambda call: call.data.startswith("chat_close_"))
     async def close_chat_callback(call: types.CallbackQuery):
         user_id = call.from_user.id
         ch_id_str = call.data.replace("chat_close_", "")

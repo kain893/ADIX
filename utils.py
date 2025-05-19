@@ -46,10 +46,10 @@ def main_menu_keyboard():
     """
     Главное меню (Reply-клавиатура).
     """
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
-    kb.row("➕Разместить объявление", "🔍Поиск объявлений")
-    kb.row("📜Личный кабинет", "Обратная связь")
-    return kb
+    return types.ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+        [ types.KeyboardButton(text="➕Разместить объявление"), types.KeyboardButton(text="🔍Поиск объявлений") ],
+        [ types.KeyboardButton(text="📜Личный кабинет"), types.KeyboardButton(text="Обратная связь") ]
+    ])
 
 async def post_ad_to_chat(bot: Bot, chat_id, ad_object, user):
     """
@@ -76,11 +76,12 @@ async def post_ad_to_chat(bot: Bot, chat_id, ad_object, user):
         "Нажмите «Купить», чтобы оформить сделку через бота."
     )
 
-    kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
     buy_btn_text = f"Купить «{ad_object.inline_button_text}»" if ad_object.inline_button_text else "Купить"
     buy_btn = types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_object.id}")
     details_btn = types.InlineKeyboardButton(text="Подробнее", callback_data=f"details_ad_{ad_object.id}")
-    kb.add(buy_btn, details_btn)
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [ buy_btn, details_btn ]
+    ])
 
     photos_list = ad_object.photos.split(",") if ad_object.photos else []
     if photos_list and photos_list[0]:

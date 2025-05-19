@@ -17,7 +17,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
          - иначе => «Пожаловаться»
     """
 
-    @dp.message(func=lambda m: m.text == "🔍Поиск объявлений")
+    @dp.message(lambda m: m.text == "🔍Поиск объявлений")
     async def start_search_flow(message: types.Message):
         chat_id = message.chat.id
         user_steps[chat_id] = {
@@ -41,7 +41,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         region_names = list(CITY_STRUCTURE.keys())
         user_steps[chat_id]["region_list"] = region_names
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         for i, reg_name in enumerate(region_names):
             cb_data = f"srch_region_{i}"
             kb.add(types.InlineKeyboardButton(text=reg_name, callback_data=cb_data))
@@ -52,8 +52,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         txt = "1) Выберите регион или «Добавить свой город», либо «Пропустить»:"
         await bot.send_message(chat_id, txt, reply_markup=kb)
 
-    @dp.callback_query(func=lambda call:
-        call.data.startswith("srch_region_") or
+    @dp.callback_query(lambda call: call.data.startswith("srch_region_") or
         call.data in ("srch_city_custom", "srch_city_skip", "srch_cancel"))
     async def handle_region_choice(call: types.CallbackQuery):
         chat_id = call.message.chat.id
@@ -127,7 +126,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         city_list = CITY_STRUCTURE.get(region_name, [])
         st["city_list"] = city_list
 
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         # «По всему региону»
         kb.add(types.InlineKeyboardButton(text=f"По всему региону «{region_name}»", callback_data="srch_wide_region"))
 
@@ -139,7 +138,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         txt = f"Регион: {region_name}\nВыберите конкретный округ или «По всему региону»:"
         await bot.send_message(chat_id, txt, reply_markup=kb)
 
-    @dp.callback_query(func=lambda call:
+    @dp.callback_query(lambda call:
         call.data.startswith("srch_city_") or
         call.data in ("srch_wide_region", "srch_back_regions"))
     async def handle_city_selection(call: types.CallbackQuery):
@@ -187,7 +186,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ====================== Шаг 3: Выбор категории ======================
     async def ask_for_category(chat_id):
-        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=2)
         for cat_name in MAIN_CATEGORIES.keys():
             cb = f"srch_cat_{cat_name}"
             kb.add(types.InlineKeyboardButton(text=cat_name, callback_data=cb))
@@ -196,7 +195,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         await bot.send_message(chat_id, "3) Выберите категорию или «Все категории»:", reply_markup=kb)
 
-    @dp.callback_query(func=lambda call:
+    @dp.callback_query(lambda call:
         call.data.startswith("srch_cat_") or
         call.data in ("srch_cat_all", "srch_cancel"))
     async def handle_category_choice(call: types.CallbackQuery):
@@ -253,7 +252,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         st = user_steps[chat_id]
         sub_list = st.get("subcat_list", [])
 
-        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=2)
         for i, name in enumerate(sub_list):
             kb.add(types.InlineKeyboardButton(text=name, callback_data=f"srch_subcat_{i}"))
         kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="srch_subcat_skip"))
@@ -266,7 +265,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         )
 
 
-    @dp.callback_query(func=lambda call:
+    @dp.callback_query(lambda call:
         call.data.startswith("srch_subcat_") or call.data == "srch_subcat_skip")
     async def handle_subcat_choice(call: types.CallbackQuery):
         chat_id = call.message.chat.id
@@ -347,7 +346,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     def build_results_kb(chat_id, ads_slice):
         st = user_steps[chat_id]
-        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup()
         for ad_obj in ads_slice:
             # Текст кнопки
             label = ad_obj.inline_button_text or (ad_obj.text[:15] + "...")
@@ -357,7 +356,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             kb.add(types.InlineKeyboardButton(text="Показать ещё", callback_data="srch_show_more"))
         return kb
 
-    @dp.callback_query(func=lambda call: call.data == "srch_show_more")
+    @dp.callback_query(lambda call: call.data == "srch_show_more")
     async def handle_show_more(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         st = user_steps.get(chat_id)
@@ -384,7 +383,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await bot.answer_callback_query(call.id)
 
     # ================== Показ одного объявления ==================
-    @dp.callback_query(func=lambda call: call.data.startswith("srch_openad_"))
+    @dp.callback_query(lambda call: call.data.startswith("srch_openad_"))
     async def handle_open_ad(call: types.CallbackQuery):
         ad_id = int(call.data.replace("srch_openad_", ""))
         chat_id = call.message.chat.id
@@ -428,7 +427,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "Нажмите «Купить», чтобы оформить сделку через бота."
         )
 
-        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb = types.InlineKeyboardMarkup(row_width=2)
         buy_lbl = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
         kb.add(
             types.InlineKeyboardButton(text=buy_lbl, callback_data=f"buy_ad_{ad_obj.id}"),
@@ -470,7 +469,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return None
 
     # =============== Пожаловаться ================
-    @dp.callback_query(func=lambda call: call.data.startswith("complain_ad_"))
+    @dp.callback_query(lambda call: call.data.startswith("complain_ad_"))
     async def complain_about_ad(call: types.CallbackQuery):
         """
         Пользователь жалуется на объявление (не купил или сделка не завершена).
@@ -519,7 +518,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             # Уведомляем админов
             # Соберите нужный ID группы или список админов
             ADMIN_COMPLAINT_CHAT_ID = -1002288960086  # или ваш ID группы
-            kb_admin = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+            kb_admin = types.InlineKeyboardMarkup()
             kb_admin.add(
                 types.InlineKeyboardButton(text="Написать продавцу", callback_data=f"complaint_msg_seller_{c_id}"),
                 types.InlineKeyboardButton(text="Удалить объявление", callback_data=f"complaint_del_ad_{c_id}"),
@@ -540,7 +539,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return None
 
     # =============== «Написать продавцу» в объявлении ================
-    @dp.callback_query(func=lambda call: call.data.startswith("write_seller_ad_"))
+    @dp.callback_query(lambda call: call.data.startswith("write_seller_ad_"))
     async def handle_write_seller(call: types.CallbackQuery):
         """
         Создаёт (или находит) AdChat и шлёт обеим сторонам кнопку «Открыть / Ответить».
@@ -594,7 +593,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             chat_id_db = chat.id  # <‑‑ сохраняем до выхода из with‑блока
 
         # ---------- UI -------------
-        kb_open = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
+        kb_open = types.InlineKeyboardMarkup(row_width=1)
         kb_open.add(
             types.InlineKeyboardButton(text="💬 Открыть чат", callback_data=f"open_chat_{chat_id_db}"),
             types.InlineKeyboardButton(text="✏️ Ответить", callback_data=f"chat_write_{chat_id_db}")
