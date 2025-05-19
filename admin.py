@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-from aiogram import Bot, Dispatcher, types
-from config import ADMIN_IDS, MODERATION_GROUP_ID, MARKETING_GROUP_ID
-from database import SessionLocal, User, Ad, ChatGroup, AdFeedback, ScheduledPost, Sale, TopUp, Withdrawal
-from database import SupportTicket, SupportMessage, AdComplaint
-from datetime import datetime, timedelta
-from utils import post_ad_to_chat, rus_status
-from functools import partial
-import os
-import openpyxl
 import csv
+import os
+from datetime import datetime, timedelta, timezone
+from functools import partial
+
+from aiogram import Bot, Dispatcher, types
+
+from config import ADMIN_IDS, MARKETING_GROUP_ID
+from database import SessionLocal, User, Ad, ChatGroup, AdFeedback, Sale, TopUp, Withdrawal
+from database import SupportTicket, SupportMessage, AdComplaint
+from utils import post_ad_to_chat, rus_status
 
 MARKIROVKA_GROUP_ID = -1002288960086 # пример чата для маркировки
 
@@ -22,7 +23,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     async def admin_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return await bot.send_message(message.chat.id, "Нет прав для доступа к админ-меню.")
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
         kb.row("Управление балансом", "Последние заказы")
         kb.row("Рассылка", "Забанить/Разбанить")
         kb.row("Редактировать объявления", "Удалить объявление")  # <-- добавили здесь
@@ -83,11 +84,11 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                 return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
             # снимем кнопки под заявкой
-            await bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            await bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
 
             if action == "approve":
                 ad.is_active = True
-                ad.created_at = datetime.utcnow()
+                ad.created_at = datetime.now(timezone.utc)
                 session.commit()
 
                 await bot.send_message(admin_id, f"✅ Продление объявления #{ad_id} одобрено.")
@@ -246,7 +247,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     async def admin_manage_chats(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
         kb.row("Добавить чат", "Список чатов", "Удалить чат")
         kb.row("Загрузить чаты (Excel/CSV)")
         kb.row("Главное меню")
@@ -745,7 +746,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             pay_card = getattr(topup_obj, "card_number", "не указана")
 
             # убираем кнопки одобрения/отклонения под заявкой
-            await bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            await bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
 
             if call.data.startswith("approve_topup_"):
                 # зачисляем средства
@@ -904,7 +905,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     async def admin_support_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
         kb.row("Список открытых тикетов", "Главное меню")
         await bot.send_message(message.chat.id, "Управление тикетами поддержки:", reply_markup=kb)
 
@@ -917,7 +918,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             if not tickets:
                 return await bot.send_message(message.chat.id, "Нет открытых тикетов.")
 
-            kb = types.InlineKeyboardMarkup(row_width=1)
+            kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
             for t in tickets:
                 btn_txt = f"Тикет #{t.id} от пользователя {t.user_id}"
                 kb.add(types.InlineKeyboardButton(text=btn_txt, callback_data=f"admin_support_view_{t.id}"))
@@ -947,13 +948,13 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                 for m in ticket.messages
             ) or "Сообщений пока нет."
 
-        kb = types.InlineKeyboardMarkup(row_width=1)
+        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
         kb.add(types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"admin_support_reply_{t_id}"),
                types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"admin_support_close_{t_id}"))
 
         await bot.edit_message_text(
             f"Тикет #{t_id}\nСтатус: {rus_status(ticket.status)}\n\n{text_history}",
-            call.message.chat.id, call.message.message_id, reply_markup=kb
+            chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=kb
         )
         return await bot.answer_callback_query(call.id)
 
@@ -1137,7 +1138,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
 
             user_seller.is_banned = True
             user_seller.ban_reason = reason
-            dt_until = datetime.utcnow() + timedelta(days=days_val)
+            dt_until = datetime.now(timezone.utc) + timedelta(days=days_val)
             user_seller.ban_until = dt_until
 
             comp = session.query(AdComplaint).filter_by(id=complaint_id).first()
@@ -1234,12 +1235,12 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
 
             if call.data.startswith("approve_ext_"):
                 # сдвигаем created_at на сейчас
-                ad.created_at = datetime.utcnow()
+                ad.created_at = datetime.now(timezone.utc)
                 sess.commit()
 
                 # уведомляем
                 await bot.edit_message_reply_markup(
-                    call.message.chat.id, call.message.message_id, reply_markup=None
+                    chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None
                 )
                 await bot.send_message(admin_id, f"✅ Продление объявления #{ad_id} одобрено.")
                 await bot.send_message(
@@ -1249,7 +1250,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             else:
                 # отклоняем
                 await bot.edit_message_reply_markup(
-                    call.message.chat.id, call.message.message_id, reply_markup=None
+                    chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None
                 )
                 await bot.send_message(admin_id, f"❌ Продление объявления #{ad_id} отклонено.")
                 await bot.send_message(

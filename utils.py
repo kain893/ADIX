@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-# utils.py
 
-from aiogram import types
-from database import SessionLocal, Ad, Sale, User
-from datetime import datetime
+from aiogram import Bot, types
+from database import SessionLocal, Sale, User
 from decimal import Decimal
 
 # Словарь для перевода статусов в русскую форму:
@@ -48,12 +46,12 @@ def main_menu_keyboard():
     """
     Главное меню (Reply-клавиатура).
     """
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True) # type: ignore[call-arg]
     kb.row("➕Разместить объявление", "🔍Поиск объявлений")
     kb.row("📜Личный кабинет", "Обратная связь")
     return kb
 
-async def post_ad_to_chat(bot, chat_id, ad_object, user):
+async def post_ad_to_chat(bot: Bot, chat_id, ad_object, user):
     """
     Публикуем объявление в указанный чат/канал.
     Вместо "[РЕКЛАМА]" теперь выводим название инлайн-кнопки (если есть).
@@ -78,7 +76,7 @@ async def post_ad_to_chat(bot, chat_id, ad_object, user):
         "Нажмите «Купить», чтобы оформить сделку через бота."
     )
 
-    kb = types.InlineKeyboardMarkup()
+    kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
     buy_btn_text = f"Купить «{ad_object.inline_button_text}»" if ad_object.inline_button_text else "Купить"
     buy_btn = types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_object.id}")
     details_btn = types.InlineKeyboardButton(text="Подробнее", callback_data=f"details_ad_{ad_object.id}")
@@ -90,7 +88,7 @@ async def post_ad_to_chat(bot, chat_id, ad_object, user):
     else:
         await bot.send_message(chat_id, caption, reply_markup=kb)
 
-def reserve_funds_for_sale(bot, buyer_id, seller_id, ad_obj):
+def reserve_funds_for_sale(bot: Bot, buyer_id, seller_id, ad_obj):
     with SessionLocal() as session:
         buyer = session.query(User).filter_by(id=buyer_id).first()
         if not buyer:

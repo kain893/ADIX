@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
-# bot.py
+
+import asyncio
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
-import asyncio
 
-from config import BOT_TOKEN
-from database import init_db, SessionLocal, User, Ad, ChatGroup, AdFeedback, ScheduledPost, Sale, TopUp
-from datetime import datetime, timedelta
-import threading
-import time
-
-# Импорт админ-хендлеров (рассылка, бан, модерация и т.д.)
-from admin import register_admin_handlers
-# Импорт функций-утилит (главное меню, post_ad_to_chat, reserve_funds_for_sale и т.п.)
-from utils import main_menu_keyboard, post_ad_to_chat, reserve_funds_for_sale
-# Импорт обработчиков поиска (включает «Пожаловаться» / «Оставить отзыв»)
-import search
 # Импорт обработчиков добавления объявлений (Формат №1 и Формат №2)
 import add_ads
 # Импорт обработчиков профиля/личного кабинета (с указанием карты при пополнении)
 import profile
+# Импорт обработчиков поиска (включает «Пожаловаться» / «Оставить отзыв»)
+import search
 # Импорт модуля обратной связи
 import support
+# Импорт админ-хендлеров (рассылка, бан, модерация и т.д.)
+from admin import register_admin_handlers
+from config import BOT_TOKEN
+from database import init_db, SessionLocal, User, Ad, ScheduledPost, Sale
+# Импорт функций-утилит (главное меню, post_ad_to_chat, reserve_funds_for_sale и т.п.)
+from utils import main_menu_keyboard, post_ad_to_chat
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties())
 dp = Dispatcher()
@@ -62,7 +61,7 @@ def get_or_create_user(chat_id, username=None):
 async def scheduled_post_worker():
     try:
         with SessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             tasks = session.query(ScheduledPost).filter(ScheduledPost.next_post_time <= now).all()
             for task in tasks:
                 ad_obj = session.query(Ad).filter_by(id=task.ad_id).first()
@@ -115,7 +114,7 @@ async def start_handler(message: types.Message):
         reply_markup=main_menu_keyboard()
     )
 
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
     kb.add(
         types.InlineKeyboardButton(
             text="📄 Пользовательское соглашение ADIX",
@@ -169,7 +168,7 @@ async def guard_group_messages(message: types.Message):
         # 3) Отправляем новое предупреждение
         # Кнопка «↩️ Перейти в бота»
         bot_username = (await bot.get_me()).username
-        inline_kb = types.InlineKeyboardMarkup()
+        inline_kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         inline_kb.add(
             types.InlineKeyboardButton(
                 text="↩️ Перейти в бота / Принять соглашение",
@@ -238,7 +237,7 @@ async def handle_buy_ad(call: types.CallbackQuery):
         )
 
     # Если это ЛС, уточняем
-    kb = types.InlineKeyboardMarkup()
+    kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
     kb.add(
         types.InlineKeyboardButton(text="Подтвердить покупку", callback_data=f"confirm_buy_ad_{ad_id}"),
         types.InlineKeyboardButton(text="Отмена", callback_data=f"cancel_buy_ad_{ad_id}")
@@ -290,7 +289,7 @@ async def handle_confirm_buy_ad(call: types.CallbackQuery):
         result = reserve_funds_for_sale(bot, buyer_id, seller_id, ad_obj)
         if result == "ok":
             # Сделка -> pending
-            kb_buyer = types.InlineKeyboardMarkup()
+            kb_buyer = types.InlineKeyboardMarkup() # type: ignore[call-arg]
             kb_buyer.add(
                 types.InlineKeyboardButton(text="Принять сделку", callback_data=f"confirm_deal_{ad_obj.id}"),
                 types.InlineKeyboardButton(text="Отклонить сделку", callback_data=f"cancel_deal_{ad_obj.id}")
@@ -414,7 +413,7 @@ async def handle_details_ad(call: types.CallbackQuery):
             "Выберите действие:"
         )
 
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         buy_btn_text = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
         kb.add(types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_obj.id}"))
         kb.add(types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
@@ -484,7 +483,7 @@ async def guard_group_messages(message: types.Message):
 
     # 3) формируем новое предупреждение
     bot_username = (await bot.get_me()).username
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
     kb.add(
         types.InlineKeyboardButton(
             text="↩️ Перейти в бота / Принять соглашение",
@@ -539,7 +538,6 @@ async def guard_group_messages(message: types.Message):
 async def main() -> None:
     # skip_pending=True, чтобы «очищать» старые «висящие» апдейты
     await dp.start_polling(bot, skip_updates=True)
-    # bot.polling(none_stop=True, skip_pending=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

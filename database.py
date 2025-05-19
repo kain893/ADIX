@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# database.py
 from sqlalchemy import (
     create_engine, Column, Integer, BigInteger, String, Text,
     Numeric, ForeignKey, DateTime, Boolean, Float

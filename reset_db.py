@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import sys
-import os
+
 from sqlalchemy import text, MetaData
-from database import engine
+
 # Импортируем ВСЕ ваши модели
 from database import (
     User, Ad, AdFeedback,
@@ -12,6 +12,8 @@ from database import (
     AdChat, AdChatMessage,
     AdComplaint,
 )
+from database import engine
+
 
 def reset_tables():
     """

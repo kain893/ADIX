@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 from aiogram import Bot, Dispatcher, types
+from aiogram.exceptions import TelegramRetryAfter, TelegramNetworkError
 from decimal import Decimal
 
-from utils import calc_chat_price
 from config import MAIN_CATEGORIES, MODERATION_GROUP_ID, CITY_STRUCTURE
 from database import SessionLocal, User, Ad, ChatGroup
-from utils import main_menu_keyboard, rus_status
-# from datetime import datetime
+from utils import calc_chat_price, main_menu_keyboard, rus_status
 
 MARKIROVKA_GROUP_ID = -1002288960086  # чат для «маркировки»
 
@@ -46,7 +45,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         # Если пользователь не заблокирован — продолжаем
         user_steps[chat_id] = {}
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(types.InlineKeyboardButton(text="Создать объявление в боте", callback_data="create_ad_start"))
         kb.add(types.InlineKeyboardButton(text="Разместить на бирже", callback_data="adix_market_start"))
         kb.add(types.InlineKeyboardButton(text="Мои объявления", callback_data="my_ads_list"))
@@ -159,11 +158,11 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if not ads_list:
                 return await bot.send_message(chat_id, "У вас нет объявлений.", reply_markup=main_menu_keyboard())
 
-            kb = types.InlineKeyboardMarkup()
+            kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
             for ad_obj in ads_list:
                 cb_data = f"my_ad_detail_{ad_obj.id}"
                 btn_text = f"Объявление #{ad_obj.id} ({rus_status(ad_obj.status)})"
-                kb.add(types.InlineKeyboardButton(btn_text, callback_data=cb_data))
+                kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=cb_data))
             kb.add(types.InlineKeyboardButton(text="Закрыть список", callback_data="close_my_ads_list"))
             return await bot.send_message(chat_id, "Ваши объявления:", reply_markup=kb)
 
@@ -199,9 +198,9 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 f"Подкатегория: {ad_obj.subcategory}\n"
                 f"Город: {ad_obj.city}\n"
             )
-            kb = types.InlineKeyboardMarkup()
+            kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
             kb.add(types.InlineKeyboardButton(text="Закрыть", callback_data="close_ad_detail"))
-            await bot.edit_message_text(detail, chat_id, call.message.message_id, reply_markup=kb)
+            await bot.edit_message_text(detail, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb)
             return await bot.answer_callback_query(call.id)
 
     @dp.callback_query(func=lambda call: call.data == "close_ad_detail")
@@ -213,7 +212,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     #                         ФОРМАТ №1 (обычное объявление)
     # ---------------------------------------------------------------------------
     async def ask_for_inline_button_name(chat_id):
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation"))
         text_ask = (
             "1. Введите название для кнопки (до 3 слов). Например: «Стул».\n"
@@ -239,7 +238,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Шаг 2: Текст объявления.
         """
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation"))
         txt = (
             "2. Введите текст объявления (описание). Укажите характеристики (новое/б/у), детали и т.д.\n"
@@ -262,7 +261,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Шаг 3: Фото (до 10 шт).
         """
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(
             types.InlineKeyboardButton(text="Готово", callback_data="photo_done"),
             types.InlineKeyboardButton(text="Пропустить", callback_data="photo_skip"),
@@ -309,7 +308,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         region_names = list(CITY_STRUCTURE.keys())  # ["Москва", "Московская область", "РФ города"]
         user_steps[chat_id]["regions_list"] = region_names
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         for i, r_name in enumerate(region_names):
             kb.add(types.InlineKeyboardButton(text=r_name, callback_data=f"pick_region_{i}"))
         kb.add(types.InlineKeyboardButton(text="Добавить свой город", callback_data="city_custom"))
@@ -357,7 +356,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         city_list = data["city_list"]
         region_name = data["picked_region"]
 
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         for j, c_name in enumerate(city_list):
             kb.add(types.InlineKeyboardButton(text=c_name, callback_data=f"pick_city_{j}"))
         kb.add(types.InlineKeyboardButton(text="Назад к регионам", callback_data="back_to_regions"))
@@ -438,9 +437,9 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Шаг 5 (Формат №1): категория.
         """
-        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
         for cat in MAIN_CATEGORIES.keys():
-            kb.add(types.InlineKeyboardButton(cat, callback_data=f"select_category_{cat}"))
+            kb.add(types.InlineKeyboardButton(text=cat, callback_data=f"select_category_{cat}"))
         kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation"))
 
         await bot.send_message(chat_id, "5. Выберите категорию:", reply_markup=kb)
@@ -473,7 +472,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             user_steps[chat_id]["subcategory"] = None
             return await ask_for_price(chat_id)
 
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         for i, s in enumerate(sub_list):
             kb.add(types.InlineKeyboardButton(text=s, callback_data=f"subcat_{i}"))
         kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="skip_subcategory"))
@@ -505,7 +504,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Шаг 6 (Формат №1): цена.
         """
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="price_skip"),
                types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation"))
         await bot.send_message(chat_id, "6. Введите цену (число) или «Пропустить».", reply_markup=kb)
@@ -539,7 +538,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Шаг 7 (Формат №1): количество (если нужно).
         """
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="quantity_skip"),
                types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation"))
         await bot.send_message(chat_id, "7. Введите количество (число) или «Пропустить».", reply_markup=kb)
@@ -629,7 +628,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 f"Контакты: @{username}\n\n"
                 f"Статус: {rus_status('pending')}"
         )
-        kb_mod = types.InlineKeyboardMarkup()
+        kb_mod = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb_mod.add(
             types.InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_ad_{ad_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_ad_{ad_id}")
@@ -692,7 +691,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Шаг 1 — «Формат №2 (Биржа)». Запрашиваем название объявления.
         """
-        kb = types.InlineKeyboardMarkup().add(
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb.add(
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         )
         await bot.send_message(
@@ -718,7 +718,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await ask_format2_description(chat_id)
 
     async def ask_format2_description(chat_id: int):
-        kb = types.InlineKeyboardMarkup().add(
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb.add(
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         )
         await bot.send_message(
@@ -738,7 +739,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await ask_format2_photos(chat_id)
 
     async def ask_format2_photos(chat_id: int):
-        kb = types.InlineKeyboardMarkup().add(
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb.add(
             types.InlineKeyboardButton(text="Готово", callback_data="format2_photos_done"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         )
@@ -769,7 +771,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         await ask_format2_fio(chat_id)
 
     async def ask_format2_fio(chat_id: int):
-        kb = types.InlineKeyboardMarkup().add(
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb.add(
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         )
         await bot.send_message(
@@ -789,7 +792,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await ask_format2_inn(chat_id)
 
     async def ask_format2_inn(chat_id: int):
-        kb = types.InlineKeyboardMarkup().add(
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+        kb.add(
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         )
         await bot.send_message(
@@ -808,7 +812,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         user_steps[chat_id]["inn"] = inn
 
         # сразу к выбору региона:
-        kb = types.InlineKeyboardMarkup(row_width=2).add(
+        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
+        kb.add(
             types.InlineKeyboardButton(text="Москва", callback_data="f2_region_moscow"),
             types.InlineKeyboardButton(text="МО", callback_data="f2_region_mo"),
             types.InlineKeyboardButton(text="Другие", callback_data="f2_region_rf")
@@ -856,7 +861,8 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 .all()
 
         if not chats:
-            kb = types.InlineKeyboardMarkup().add(
+            kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
+            kb.add(
                 types.InlineKeyboardButton(text="🔙 Выбрать регион заново", callback_data="f2_back_region"),
                 types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
             )
@@ -884,7 +890,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         subset = chats[page * per:(page + 1) * per]
 
-        kb = types.InlineKeyboardMarkup(row_width=1)
+        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
         for c in subset:
             flag = "✅" if c.id in d["selected_chat_ids"] else "◻️"
             kb.add(types.InlineKeyboardButton(
@@ -908,8 +914,10 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         if d.get("last_list_msg_id"):
             try:
-                return await bot.edit_message_text(text, chat_id, d["last_list_msg_id"], reply_markup=kb)
-            except telebot.apihelper.ApiException:
+                return await bot.edit_message_text(text, chat_id=chat_id, message_id=d["last_list_msg_id"], reply_markup=kb)
+            except TelegramRetryAfter:
+                pass
+            except TelegramNetworkError:
                 pass
 
         sent = await bot.send_message(chat_id, text, reply_markup=kb)
@@ -980,7 +988,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             cg = sess.query(ChatGroup).get(cg_id)
         d["current_cg"] = cg
 
-        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
         kb.add(
             types.InlineKeyboardButton(text="1 размещение", callback_data="f2cnt_1"),
             types.InlineKeyboardButton(text="5 размещений", callback_data="f2cnt_5"),
@@ -1053,7 +1061,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "\nОплатить всё?"
         ]
 
-        kb = types.InlineKeyboardMarkup(row_width=1)
+        kb = types.InlineKeyboardMarkup(row_width=1) # type: ignore[call-arg]
         kb.add(
             types.InlineKeyboardButton(text="💳 Оплатить", callback_data="f2pay_all"),
             types.InlineKeyboardButton(text="🔙 Вернуться к чатам", callback_data="f2_back_to_chats"),
@@ -1154,7 +1162,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             caption = "\n".join(lines)
 
             # ---------- клавиатура: по 2 кнопки на КАЖДЫЙ ad_id ------------
-            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb = types.InlineKeyboardMarkup(row_width=2) # type: ignore[call-arg]
             for ad_id in ad_ids:
                 kb.add(
                     types.InlineKeyboardButton(text=f"✅ Принять #{ad_id}", callback_data=f"approve_ad_{ad_id}"),
@@ -1209,7 +1217,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         Выбор: 1, 5, 10 размещений или «Закреп (×1.6)».
         """
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(
             types.InlineKeyboardButton(text="1 размещение", callback_data="f2count_1"),
             types.InlineKeyboardButton(text="5 размещений", callback_data="f2count_5")
@@ -1258,7 +1266,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         user_steps[chat_id]["total_sum"] = total_sum
 
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(
             types.InlineKeyboardButton(text="Оплатить", callback_data="f2pay_now"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
@@ -1305,7 +1313,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         marking_fee = 50.0
         user_steps[chat_id]["marking_fee"] = marking_fee
 
-        kb = types.InlineKeyboardMarkup()
+        kb = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb.add(
             types.InlineKeyboardButton(text="Оплатить маркировку", callback_data="f2pay_marking"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
@@ -1391,7 +1399,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             f"Итого: {total_sum} руб.\n"
             f"Статус: {rus_status('pending')}"
         )
-        kb_mod = types.InlineKeyboardMarkup()
+        kb_mod = types.InlineKeyboardMarkup() # type: ignore[call-arg]
         kb_mod.add(
             types.InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_ad_{ad_id}"),
             types.InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_ad_{ad_id}")
