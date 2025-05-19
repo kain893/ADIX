@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # utils.py
 
-from telebot import types
+from aiogram import types
 from database import SessionLocal, Ad, Sale, User
 from datetime import datetime
 from decimal import Decimal
@@ -53,7 +53,7 @@ def main_menu_keyboard():
     kb.row("📜Личный кабинет", "Обратная связь")
     return kb
 
-def post_ad_to_chat(bot, chat_id, ad_object, user):
+async def post_ad_to_chat(bot, chat_id, ad_object, user):
     """
     Публикуем объявление в указанный чат/канал.
     Вместо "[РЕКЛАМА]" теперь выводим название инлайн-кнопки (если есть).
@@ -80,15 +80,15 @@ def post_ad_to_chat(bot, chat_id, ad_object, user):
 
     kb = types.InlineKeyboardMarkup()
     buy_btn_text = f"Купить «{ad_object.inline_button_text}»" if ad_object.inline_button_text else "Купить"
-    buy_btn = types.InlineKeyboardButton(buy_btn_text, callback_data=f"buy_ad_{ad_object.id}")
-    details_btn = types.InlineKeyboardButton("Подробнее", callback_data=f"details_ad_{ad_object.id}")
+    buy_btn = types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_object.id}")
+    details_btn = types.InlineKeyboardButton(text="Подробнее", callback_data=f"details_ad_{ad_object.id}")
     kb.add(buy_btn, details_btn)
 
     photos_list = ad_object.photos.split(",") if ad_object.photos else []
     if photos_list and photos_list[0]:
-        bot.send_photo(chat_id, photos_list[0], caption=caption, reply_markup=kb)
+        await bot.send_photo(chat_id, photos_list[0], caption=caption, reply_markup=kb)
     else:
-        bot.send_message(chat_id, caption, reply_markup=kb)
+        await bot.send_message(chat_id, caption, reply_markup=kb)
 
 def reserve_funds_for_sale(bot, buyer_id, seller_id, ad_obj):
     with SessionLocal() as session:

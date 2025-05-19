@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-import telebot
-from telebot import types
+from aiogram import Bot, Dispatcher, types
 from database import SessionLocal, Ad, User, AdChat, Sale, AdComplaint
 from config import MAIN_CATEGORIES, CITY_STRUCTURE
 from utils import main_menu_keyboard
 
-def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
+def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     """
     Поиск объявлений с логикой:
       1) Выбор региона
@@ -18,8 +17,8 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
          - иначе => «Пожаловаться»
     """
 
-    @bot.message_handler(func=lambda m: m.text == "🔍Поиск объявлений")
-    def start_search_flow(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "🔍Поиск объявлений")
+    async def start_search_flow(message: types.Message):
         chat_id = message.chat.id
         user_steps[chat_id] = {
             "mode": "search_flow",
@@ -35,60 +34,57 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             "search_results": [],
             "shown_count": 0
         }
-        ask_for_region(chat_id)
+        await ask_for_region(chat_id)
 
     # ====================== Шаг 1: Выбор региона ======================
-    def ask_for_region(chat_id):
+    async def ask_for_region(chat_id):
         region_names = list(CITY_STRUCTURE.keys())
         user_steps[chat_id]["region_list"] = region_names
 
         kb = types.InlineKeyboardMarkup()
         for i, reg_name in enumerate(region_names):
             cb_data = f"srch_region_{i}"
-            kb.add(types.InlineKeyboardButton(reg_name, callback_data=cb_data))
-        kb.add(types.InlineKeyboardButton("Добавить свой город", callback_data="srch_city_custom"))
-        kb.add(types.InlineKeyboardButton("Пропустить город", callback_data="srch_city_skip"))
-        kb.add(types.InlineKeyboardButton("Отмена", callback_data="srch_cancel"))
+            kb.add(types.InlineKeyboardButton(text=reg_name, callback_data=cb_data))
+        kb.add(types.InlineKeyboardButton(text="Добавить свой город", callback_data="srch_city_custom"))
+        kb.add(types.InlineKeyboardButton(text="Пропустить город", callback_data="srch_city_skip"))
+        kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel"))
 
         txt = "1) Выберите регион или «Добавить свой город», либо «Пропустить»:"
-        bot.send_message(chat_id, txt, reply_markup=kb)
+        await bot.send_message(chat_id, txt, reply_markup=kb)
 
-    @bot.callback_query_handler(func=lambda call:
+    @dp.callback_query(func=lambda call:
         call.data.startswith("srch_region_") or
         call.data in ("srch_city_custom", "srch_city_skip", "srch_cancel"))
-    def handle_region_choice(call: telebot.types.CallbackQuery):
+    async def handle_region_choice(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps or user_steps[chat_id]["mode"] != "search_flow":
-            bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
 
         st = user_steps[chat_id]
 
         if call.data == "srch_cancel":
             # Отмена
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, "Поиск отменён.")
-            bot.send_message(chat_id, "Поиск отменён.", reply_markup=main_menu_keyboard())
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, "Поиск отменён.")
+            await bot.send_message(chat_id, "Поиск отменён.", reply_markup=main_menu_keyboard())
             user_steps.pop(chat_id, None)
-            return
+            return None
 
         if call.data == "srch_city_skip":
             # Пропустить город
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, "Без города")
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, "Без города")
             st["city"] = None
             st["use_region_wide"] = False
             st["is_custom_city"] = False
-            ask_for_category(chat_id)
-            return
+            return await ask_for_category(chat_id)
 
         if call.data == "srch_city_custom":
             # Пользователь вводит свой город вручную
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id)
-            msg = bot.send_message(chat_id, "Введите свой город (поиск будет по частичному совпадению):")
-            bot.register_next_step_handler(msg, process_custom_city)
-            return
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id)
+            msg = await bot.send_message(chat_id, "Введите свой город (поиск будет по частичному совпадению):")
+            return await bot.register_next_step_handler(msg, process_custom_city)
 
         # srch_region_{i}
         if call.data.startswith("srch_region_"):
@@ -96,22 +92,22 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             try:
                 idx = int(idx_str)
             except:
-                bot.answer_callback_query(call.id, "Ошибка индекса региона", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Ошибка индекса региона", show_alert=True)
             regions = st["region_list"]
             if idx < 0 or idx >= len(regions):
-                bot.answer_callback_query(call.id, "Недопустимый индекс", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Недопустимый индекс", show_alert=True)
 
             chosen_region = regions[idx]
             st["picked_region"] = chosen_region
             st["is_custom_city"] = False
 
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, f"Регион: {chosen_region}")
-            show_city_list(chat_id)
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, f"Регион: {chosen_region}")
+            return await show_city_list(chat_id)
+        else:
+            return None
 
-    def process_custom_city(message: telebot.types.Message):
+    async def process_custom_city(message: types.Message):
         chat_id = message.chat.id
         if chat_id not in user_steps or user_steps[chat_id]["mode"] != "search_flow":
             return
@@ -122,10 +118,10 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
         st["use_region_wide"] = False
         st["is_custom_city"] = True
 
-        ask_for_category(chat_id)
+        await ask_for_category(chat_id)
 
     # ====================== Шаг 2: Выбор города/округа ======================
-    def show_city_list(chat_id):
+    async def show_city_list(chat_id):
         st = user_steps[chat_id]
         region_name = st["picked_region"]
         city_list = CITY_STRUCTURE.get(region_name, [])
@@ -133,54 +129,49 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
 
         kb = types.InlineKeyboardMarkup()
         # «По всему региону»
-        kb.add(types.InlineKeyboardButton(f"По всему региону «{region_name}»", callback_data="srch_wide_region"))
+        kb.add(types.InlineKeyboardButton(text=f"По всему региону «{region_name}»", callback_data="srch_wide_region"))
 
         for i, c_name in enumerate(city_list):
             cb = f"srch_city_{i}"
-            kb.add(types.InlineKeyboardButton(c_name, callback_data=cb))
-        kb.add(types.InlineKeyboardButton("Назад к регионам", callback_data="srch_back_regions"))
+            kb.add(types.InlineKeyboardButton(text=c_name, callback_data=cb))
+        kb.add(types.InlineKeyboardButton(text="Назад к регионам", callback_data="srch_back_regions"))
 
         txt = f"Регион: {region_name}\nВыберите конкретный округ или «По всему региону»:"
-        bot.send_message(chat_id, txt, reply_markup=kb)
+        await bot.send_message(chat_id, txt, reply_markup=kb)
 
-    @bot.callback_query_handler(func=lambda call:
+    @dp.callback_query(func=lambda call:
         call.data.startswith("srch_city_") or
         call.data in ("srch_wide_region", "srch_back_regions"))
-    def handle_city_selection(call: telebot.types.CallbackQuery):
+    async def handle_city_selection(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         if chat_id not in user_steps or user_steps[chat_id]["mode"] != "search_flow":
-            bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
 
         st = user_steps[chat_id]
 
         if call.data == "srch_back_regions":
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id)
-            ask_for_region(chat_id)
-            return
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id)
+            return await ask_for_region(chat_id)
 
         if call.data == "srch_wide_region":
             region_name = st["picked_region"]
             st["city"] = region_name
             st["use_region_wide"] = True
             st["is_custom_city"] = False
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, f"По всему региону: {region_name}")
-            ask_for_category(chat_id)
-            return
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, f"По всему региону: {region_name}")
+            return await ask_for_category(chat_id)
 
         if call.data.startswith("srch_city_"):
             idx_str = call.data.replace("srch_city_", "")
             try:
                 idx = int(idx_str)
             except:
-                bot.answer_callback_query(call.id, "Ошибка индекса города", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Ошибка индекса города", show_alert=True)
             c_list = st["city_list"]
             if idx < 0 or idx >= len(c_list):
-                bot.answer_callback_query(call.id, "Недопустимый индекс города", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Недопустимый индекс города", show_alert=True)
 
             chosen_city = c_list[idx]
             region = st["picked_region"]
@@ -188,45 +179,46 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             st["use_region_wide"] = False
             st["is_custom_city"] = False
 
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, f"Город: {region} | {chosen_city}")
-            ask_for_category(chat_id)
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, f"Город: {region} | {chosen_city}")
+            return await ask_for_category(chat_id)
+        else:
+            return None
 
     # ====================== Шаг 3: Выбор категории ======================
-    def ask_for_category(chat_id):
+    async def ask_for_category(chat_id):
         kb = types.InlineKeyboardMarkup(row_width=2)
         for cat_name in MAIN_CATEGORIES.keys():
             cb = f"srch_cat_{cat_name}"
-            kb.add(types.InlineKeyboardButton(cat_name, callback_data=cb))
-        kb.add(types.InlineKeyboardButton("Все категории", callback_data="srch_cat_all"))
-        kb.add(types.InlineKeyboardButton("Отмена", callback_data="srch_cancel"))
+            kb.add(types.InlineKeyboardButton(text=cat_name, callback_data=cb))
+        kb.add(types.InlineKeyboardButton(text="Все категории", callback_data="srch_cat_all"))
+        kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel"))
 
-        bot.send_message(chat_id, "3) Выберите категорию или «Все категории»:", reply_markup=kb)
+        await bot.send_message(chat_id, "3) Выберите категорию или «Все категории»:", reply_markup=kb)
 
-    @bot.callback_query_handler(func=lambda call:
+    @dp.callback_query(func=lambda call:
         call.data.startswith("srch_cat_") or
         call.data in ("srch_cat_all", "srch_cancel"))
-    def handle_category_choice(call: telebot.types.CallbackQuery):
+    async def handle_category_choice(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         st = user_steps.get(chat_id)
         if not st or st.get("mode") != "search_flow":
-            return bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
 
         if call.data == "srch_cancel":
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, "Поиск отменён.")
-            bot.send_message(chat_id, "Поиск отменён.", reply_markup=main_menu_keyboard())
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, "Поиск отменён.")
+            await bot.send_message(chat_id, "Поиск отменён.", reply_markup=main_menu_keyboard())
             user_steps.pop(chat_id, None)
-            return
+            return None
 
         if call.data == "srch_cat_all":
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, "Все категории")
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, "Все категории")
             st["category"] = None
             st["subcat_list"] = []
             st["subcategory"] = None
-            do_search(chat_id)
-            return
+            return await do_search(chat_id)
 
         # выбор конкретной категории
         if call.data.startswith("srch_cat_"):
@@ -241,17 +233,19 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
                 flat.extend(parts)
             st["subcat_list"] = flat
 
-            bot.delete_message(chat_id, call.message.message_id)
-            bot.answer_callback_query(call.id, f"Категория: {cat_name}")
+            await bot.delete_message(chat_id, call.message.message_id)
+            await bot.answer_callback_query(call.id, f"Категория: {cat_name}")
 
             if not flat:
                 # если в категории нет подкатегорий
                 st["subcategory"] = None
-                do_search(chat_id)
+                return await do_search(chat_id)
             else:
-                ask_for_subcategory(chat_id, cat_name)
+                return await ask_for_subcategory(chat_id, cat_name)
+        else:
+            return None
 
-    def ask_for_subcategory(chat_id, cat_name: str):
+    async def ask_for_subcategory(chat_id, cat_name: str):
         """
         Шаг 4: предста­вляем пользователю список подкатегорий,
         каждая из которых уже — отдельная кнопка.
@@ -261,43 +255,43 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
 
         kb = types.InlineKeyboardMarkup(row_width=2)
         for i, name in enumerate(sub_list):
-            kb.add(types.InlineKeyboardButton(name, callback_data=f"srch_subcat_{i}"))
-        kb.add(types.InlineKeyboardButton("Пропустить", callback_data="srch_subcat_skip"))
-        kb.add(types.InlineKeyboardButton("Отмена", callback_data="srch_cancel"))
+            kb.add(types.InlineKeyboardButton(text=name, callback_data=f"srch_subcat_{i}"))
+        kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="srch_subcat_skip"))
+        kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel"))
 
-        bot.send_message(
+        await bot.send_message(
             chat_id,
             f"Категория «{cat_name}»: выберите подкатегорию:",
             reply_markup=kb
         )
 
 
-    @bot.callback_query_handler(func=lambda call:
+    @dp.callback_query(func=lambda call:
         call.data.startswith("srch_subcat_") or call.data == "srch_subcat_skip")
-    def handle_subcat_choice(call: telebot.types.CallbackQuery):
+    async def handle_subcat_choice(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         st = user_steps.get(chat_id)
         if not st or st.get("mode") != "search_flow":
-            return bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
 
         if call.data == "srch_subcat_skip":
             st["subcategory"] = None
-            bot.answer_callback_query(call.id, "Подкатегория пропущена.")
+            await bot.answer_callback_query(call.id, "Подкатегория пропущена.")
         else:
             idx = int(call.data.replace("srch_subcat_", ""))
             sub_list = st.get("subcat_list", [])
             if 0 <= idx < len(sub_list):
                 chosen = sub_list[idx]
                 st["subcategory"] = chosen
-                bot.answer_callback_query(call.id, f"Подкатегория: {chosen}")
+                await bot.answer_callback_query(call.id, f"Подкатегория: {chosen}")
             else:
-                return bot.answer_callback_query(call.id, "Некорректный индекс", show_alert=True)
+                return await bot.answer_callback_query(call.id, "Некорректный индекс", show_alert=True)
 
-        bot.delete_message(chat_id, call.message.message_id)
-        do_search(chat_id)
+        await bot.delete_message(chat_id, call.message.message_id)
+        return await do_search(chat_id)
 
     # ====================== Шаг 4: Поиск ======================
-    def do_search(chat_id):
+    async def do_search(chat_id):
         st = user_steps[chat_id]
         city = st["city"]
         region_ok = st["use_region_wide"]
@@ -333,7 +327,7 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
         st["shown_count"] = 0
 
         if not ads_found:
-            bot.send_message(
+            await bot.send_message(
                 chat_id,
                 "Ничего не найдено по заданным критериям.",
                 reply_markup=main_menu_keyboard()
@@ -347,7 +341,7 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
 
         kb = build_results_kb(chat_id, slice_)
         text = f"Найдено объявлений: {len(ads_found)}.\nВыберите:"
-        sent = bot.send_message(chat_id, text, reply_markup=kb)
+        sent = await bot.send_message(chat_id, text, reply_markup=kb)
 
         st["last_list_msg_id"] = sent.message_id
 
@@ -358,40 +352,40 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             # Текст кнопки
             label = ad_obj.inline_button_text or (ad_obj.text[:15] + "...")
             cb_data = f"srch_openad_{ad_obj.id}"
-            kb.add(types.InlineKeyboardButton(label, callback_data=cb_data))
+            kb.add(types.InlineKeyboardButton(text=label, callback_data=cb_data))
         if st["shown_count"] < len(st["search_results"]):
-            kb.add(types.InlineKeyboardButton("Показать ещё", callback_data="srch_show_more"))
+            kb.add(types.InlineKeyboardButton(text="Показать ещё", callback_data="srch_show_more"))
         return kb
 
-    @bot.callback_query_handler(func=lambda call: call.data == "srch_show_more")
-    def handle_show_more(call: telebot.types.CallbackQuery):
+    @dp.callback_query(func=lambda call: call.data == "srch_show_more")
+    async def handle_show_more(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         st = user_steps.get(chat_id)
         if not st or st["mode"] != "search_flow":
-            return bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
 
         ads = st["search_results"]
         shown = st["shown_count"]
         slice_ = ads[shown: shown + 10]
         if not slice_:
-            return bot.answer_callback_query(call.id, "Больше объявлений нет.", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Больше объявлений нет.", show_alert=True)
 
         st["shown_count"] += len(slice_)
         kb = build_results_kb(chat_id, slice_)
 
         try:
-            bot.edit_message_reply_markup(chat_id,
-                                          st["last_list_msg_id"],
-                                          reply_markup=kb)
+            await bot.edit_message_reply_markup(chat_id,
+                                                st["last_list_msg_id"],
+                                                reply_markup=kb)
         except:
-            sent = bot.send_message(chat_id, "Дополнительные объявления:", reply_markup=kb)
+            sent = await bot.send_message(chat_id, "Дополнительные объявления:", reply_markup=kb)
             st["last_list_msg_id"] = sent.message_id  # вдруг старое нельзя было редактировать
 
-        bot.answer_callback_query(call.id)
+        return await bot.answer_callback_query(call.id)
 
     # ================== Показ одного объявления ==================
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("srch_openad_"))
-    def handle_open_ad(call: telebot.types.CallbackQuery):
+    @dp.callback_query(func=lambda call: call.data.startswith("srch_openad_"))
+    async def handle_open_ad(call: types.CallbackQuery):
         ad_id = int(call.data.replace("srch_openad_", ""))
         chat_id = call.message.chat.id
         st = user_steps.get(chat_id)
@@ -405,7 +399,7 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             ).first()
 
             if not ad_obj:
-                return bot.answer_callback_query(
+                return await bot.answer_callback_query(
                     call.id,
                     "Объявление не найдено или деактивировано.",
                     show_alert=True
@@ -437,46 +431,47 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
         kb = types.InlineKeyboardMarkup(row_width=2)
         buy_lbl = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
         kb.add(
-            types.InlineKeyboardButton(buy_lbl, callback_data=f"buy_ad_{ad_obj.id}"),
-            types.InlineKeyboardButton("Подробнее", callback_data=f"details_ad_{ad_obj.id}")
+            types.InlineKeyboardButton(text=buy_lbl, callback_data=f"buy_ad_{ad_obj.id}"),
+            types.InlineKeyboardButton(text="Подробнее", callback_data=f"details_ad_{ad_obj.id}")
         )
-        kb.add(types.InlineKeyboardButton("Написать продавцу", callback_data=f"write_seller_ad_{ad_obj.id}"))
+        kb.add(types.InlineKeyboardButton(text="Написать продавцу", callback_data=f"write_seller_ad_{ad_obj.id}"))
 
         if sale_done:
-            kb.add(types.InlineKeyboardButton("Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
+            kb.add(types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
         else:
-            kb.add(types.InlineKeyboardButton("Пожаловаться", callback_data=f"complain_ad_{ad_obj.id}"))
+            kb.add(types.InlineKeyboardButton(text="Пожаловаться", callback_data=f"complain_ad_{ad_obj.id}"))
 
-        kb.add(types.InlineKeyboardButton("Отзывы о продавце", callback_data=f"viewfeedback_seller_{user_obj.id}"))
+        kb.add(types.InlineKeyboardButton(text="Отзывы о продавце", callback_data=f"viewfeedback_seller_{user_obj.id}"))
 
         # --- выводим фото или текст ---------------------------
         photos = [p for p in (ad_obj.photos or "").split(",") if p]
         if photos:
             media = [types.InputMediaPhoto(media=photos[0], caption=caption)]
             media.extend(types.InputMediaPhoto(media=p) for p in photos[1:])
-            bot.send_media_group(chat_id, media)
-            bot.send_message(chat_id, "Выберите действие:", reply_markup=kb)
+            await bot.send_media_group(chat_id, media)
+            await bot.send_message(chat_id, "Выберите действие:", reply_markup=kb)
         else:
-            bot.send_message(chat_id, caption, reply_markup=kb)
+            await bot.send_message(chat_id, caption, reply_markup=kb)
 
-        bot.answer_callback_query(call.id)
+        await bot.answer_callback_query(call.id)
 
         # --- обновляем «список объявлений» под сообщением ------
         if st and "last_list_msg_id" in st:
             try:
-                bot.delete_message(chat_id, st["last_list_msg_id"])
+                await bot.delete_message(chat_id, st["last_list_msg_id"])
             except:
                 pass
 
             slice_ = st["search_results"][:st["shown_count"]]
             new_kb = build_results_kb(chat_id, slice_)
             txt = f"Найдено объявлений: {len(st['search_results'])}.\nВыберите:"
-            new_msg = bot.send_message(chat_id, txt, reply_markup=new_kb)
+            new_msg = await bot.send_message(chat_id, txt, reply_markup=new_kb)
             st["last_list_msg_id"] = new_msg.message_id
+        return None
 
     # =============== Пожаловаться ================
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("complain_ad_"))
-    def complain_about_ad(call: telebot.types.CallbackQuery):
+    @dp.callback_query(func=lambda call: call.data.startswith("complain_ad_"))
+    async def complain_about_ad(call: types.CallbackQuery):
         """
         Пользователь жалуется на объявление (не купил или сделка не завершена).
         Сохраняем в AdComplaint, уведомляем админов.
@@ -485,21 +480,19 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
         try:
             ad_id = int(ad_id_str)
         except:
-            bot.answer_callback_query(call.id, "Некорректный ID объявления", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Некорректный ID объявления", show_alert=True)
 
         user_id = call.from_user.id
-        bot.answer_callback_query(call.id)
+        await bot.answer_callback_query(call.id)
         # Просим текст жалобы
-        msg = bot.send_message(user_id, "Опишите причину/суть жалобы:")
+        msg = await bot.send_message(user_id, "Опишите причину/суть жалобы:")
         user_steps[user_id] = {"complaint_ad_id": ad_id}
-        bot.register_next_step_handler(msg, process_complaint_text)
+        return await bot.register_next_step_handler(msg, process_complaint_text)
 
-    def process_complaint_text(message: telebot.types.Message):
+    async def process_complaint_text(message: types.Message):
         user_id = message.chat.id
         if user_id not in user_steps or "complaint_ad_id" not in user_steps[user_id]:
-            bot.send_message(user_id, "Ошибка: нет информации об объявлении. Жалоба отменена.")
-            return
+            return await bot.send_message(user_id, "Ошибка: нет информации об объявлении. Жалоба отменена.")
 
         ad_id = user_steps[user_id]["complaint_ad_id"]
         text_of_complaint = message.text.strip()
@@ -508,9 +501,9 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
         with SessionLocal() as sess:
             ad_obj = sess.query(Ad).filter_by(id=ad_id).first()
             if not ad_obj:
-                bot.send_message(user_id, "Объявление не найдено, жалоба отменена.")
+                await bot.send_message(user_id, "Объявление не найдено, жалоба отменена.")
                 user_steps.pop(user_id, None)
-                return
+                return None
 
             # Создаём жалобу
             complaint = AdComplaint(
@@ -528,12 +521,12 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             ADMIN_COMPLAINT_CHAT_ID = -1002288960086  # или ваш ID группы
             kb_admin = types.InlineKeyboardMarkup()
             kb_admin.add(
-                types.InlineKeyboardButton("Написать продавцу", callback_data=f"complaint_msg_seller_{c_id}"),
-                types.InlineKeyboardButton("Удалить объявление", callback_data=f"complaint_del_ad_{c_id}"),
-                types.InlineKeyboardButton("Заблокировать пользователя", callback_data=f"complaint_ban_{c_id}")
+                types.InlineKeyboardButton(text="Написать продавцу", callback_data=f"complaint_msg_seller_{c_id}"),
+                types.InlineKeyboardButton(text="Удалить объявление", callback_data=f"complaint_del_ad_{c_id}"),
+                types.InlineKeyboardButton(text="Заблокировать пользователя", callback_data=f"complaint_ban_{c_id}")
             )
 
-            bot.send_message(
+            await bot.send_message(
                 ADMIN_COMPLAINT_CHAT_ID,
                 f"Поступила жалоба #{c_id} на объявление #{ad_id}.\n"
                 f"От пользователя #{user_id}.\n"
@@ -542,12 +535,13 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
                 reply_markup=kb_admin
             )
 
-        bot.send_message(user_id, "Ваша жалоба отправлена администраторам.")
+        await bot.send_message(user_id, "Ваша жалоба отправлена администраторам.")
         user_steps.pop(user_id, None)
+        return None
 
     # =============== «Написать продавцу» в объявлении ================
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("write_seller_ad_"))
-    def handle_write_seller(call: telebot.types.CallbackQuery):
+    @dp.callback_query(func=lambda call: call.data.startswith("write_seller_ad_"))
+    async def handle_write_seller(call: types.CallbackQuery):
         """
         Создаёт (или находит) AdChat и шлёт обеим сторонам кнопку «Открыть / Ответить».
         Исправлено:
@@ -564,7 +558,7 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
             # 1. объявление
             ad = sess.query(Ad).filter_by(id=ad_id, status="approved").first()
             if not ad or ad.user_id == buyer_id:
-                return bot.answer_callback_query(
+                return await bot.answer_callback_query(
                     call.id, "Объявление не найдено или это ваше объявление.",
                     show_alert=True
                 )
@@ -602,12 +596,12 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
         # ---------- UI -------------
         kb_open = types.InlineKeyboardMarkup(row_width=1)
         kb_open.add(
-            types.InlineKeyboardButton("💬 Открыть чат", callback_data=f"open_chat_{chat_id_db}"),
-            types.InlineKeyboardButton("✏️ Ответить", callback_data=f"chat_write_{chat_id_db}")
+            types.InlineKeyboardButton(text="💬 Открыть чат", callback_data=f"open_chat_{chat_id_db}"),
+            types.InlineKeyboardButton(text="✏️ Ответить", callback_data=f"chat_write_{chat_id_db}")
         )
 
         # покупателю
-        bot.send_message(
+        await bot.send_message(
             buyer_id,
             f"Открыт чат #{chat_id_db} с продавцом (объявление #{ad_id}).",
             reply_markup=kb_open
@@ -615,10 +609,10 @@ def register_search_handlers(bot: telebot.TeleBot, user_steps: dict):
 
         # продавцу
         mention = f"@{buyer_name}" if buyer_name else f"#{buyer_id}"
-        bot.send_message(
+        await bot.send_message(
             seller_id,
             f"Покупатель {mention} написал вам по объявлению #{ad_id}.",
             reply_markup=kb_open
         )
 
-        bot.answer_callback_query(call.id, "Чат создан.")
+        return await bot.answer_callback_query(call.id, "Чат создан.")

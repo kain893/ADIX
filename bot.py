@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # bot.py
 
-import telebot
-from telebot import types
+from aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
+import asyncio
+
 from config import BOT_TOKEN
 from database import init_db, SessionLocal, User, Ad, ChatGroup, AdFeedback, ScheduledPost, Sale, TopUp
 from datetime import datetime, timedelta
@@ -22,7 +24,8 @@ import profile
 # Импорт модуля обратной связи
 import support
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties())
+dp = Dispatcher()
 init_db()
 
 # Хранилище для состояния (шагов) пользователей
@@ -33,11 +36,11 @@ user_steps = {}
 warn_messages = {}
 
 # Регистрируем все хендлеры из соответствующих модулей
-register_admin_handlers(bot)
-search.register_search_handlers(bot, user_steps)
-add_ads.register_add_ads_handlers(bot, user_steps)
-profile.register_profile_handlers(bot, user_steps)
-support.register_support_handlers(bot)
+register_admin_handlers(bot, dp)
+search.register_search_handlers(bot, dp, user_steps)
+add_ads.register_add_ads_handlers(bot, dp, user_steps)
+profile.register_profile_handlers(bot, dp, user_steps)
+support.register_support_handlers(bot, dp)
 
 def get_or_create_user(chat_id, username=None):
     """
@@ -56,38 +59,41 @@ def get_or_create_user(chat_id, username=None):
                 session.commit()
         return user
 
-def scheduled_post_worker():
+async def scheduled_post_worker():
+    try:
+        with SessionLocal() as session:
+            now = datetime.utcnow()
+            tasks = session.query(ScheduledPost).filter(ScheduledPost.next_post_time <= now).all()
+            for task in tasks:
+                ad_obj = session.query(Ad).filter_by(id=task.ad_id).first()
+                if ad_obj and ad_obj.status == "approved":
+                    user_obj = session.query(User).filter_by(id=ad_obj.user_id).first()
+                    await post_ad_to_chat(bot, task.chat_id, ad_obj, user_obj)
+
+                task.posts_left -= 1
+                if task.posts_left > 0:
+                    task.next_post_time = now + timedelta(minutes=task.interval_minutes)
+                else:
+                    session.delete(task)
+            session.commit()
+    except Exception as e:
+        print("Ошибка в scheduled_post_worker:", e)
+
+def scheduled_post_worker_sync():
     """
     Пример фонового потока для обработки таблицы ScheduledPost.
     Раз в минуту проверяем, не пора ли опубликовать что-то в чате/канале.
     """
     while True:
-        try:
-            with SessionLocal() as session:
-                now = datetime.utcnow()
-                tasks = session.query(ScheduledPost).filter(ScheduledPost.next_post_time <= now).all()
-                for task in tasks:
-                    ad_obj = session.query(Ad).filter_by(id=task.ad_id).first()
-                    if ad_obj and ad_obj.status == "approved":
-                        user_obj = session.query(User).filter_by(id=ad_obj.user_id).first()
-                        post_ad_to_chat(bot, task.chat_id, ad_obj, user_obj)
-
-                    task.posts_left -= 1
-                    if task.posts_left > 0:
-                        task.next_post_time = now + timedelta(minutes=task.interval_minutes)
-                    else:
-                        session.delete(task)
-                session.commit()
-        except Exception as e:
-            print("Ошибка в scheduled_post_worker:", e)
+        asyncio.run(scheduled_post_worker())
         time.sleep(60)
 
 # Запускаем поток, который публикует запланированные объявления
-bg_thread = threading.Thread(target=scheduled_post_worker, daemon=True)
+bg_thread = threading.Thread(target=scheduled_post_worker_sync, daemon=True)
 bg_thread.start()
 
-@bot.message_handler(commands=["start"])
-def start_handler(message: telebot.types.Message):
+@dp.message(commands=["start"])
+async def start_handler(message: types.Message):
     """
     Регистрируем (или обновляем) пользователя и выводим приветствие
     + ссылки на оба соглашения.
@@ -102,7 +108,7 @@ def start_handler(message: telebot.types.Message):
         "💬 **Пользовательское соглашение Чатов Биржи ADIX**\n\n"
         "➡️ Для навигации используйте меню ниже."
     )
-    bot.send_message(
+    await bot.send_message(
         message.chat.id,
         greeting,
         parse_mode="Markdown",
@@ -112,15 +118,15 @@ def start_handler(message: telebot.types.Message):
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
         types.InlineKeyboardButton(
-            "📄 Пользовательское соглашение ADIX",
+            text="📄 Пользовательское соглашение ADIX",
             url="https://telegra.ph/Polzovatelskoe-soglashenie-03-25-9"
         ),
         types.InlineKeyboardButton(
-            "💬 Соглашение Чатов Биржи ADIX",
+            text="💬 Соглашение Чатов Биржи ADIX",
             url="https://telegra.ph/Obshchie-polozheniya-03-25"
         )
     )
-    bot.send_message(
+    await bot.send_message(
         message.chat.id,
         "📌 Ознакомьтесь, пожалуйста, с документами:",
         parse_mode="Markdown",
@@ -128,11 +134,11 @@ def start_handler(message: telebot.types.Message):
     )
 
 # ------------------- Удаляем сообщения из групп/супергрупп, если нет /start (пункты 1 и 2) -------------------
-@bot.message_handler(
+@dp.message(
     content_types=["text","photo","sticker","video","document","voice","animation"],
     func=lambda m: m.chat.type in ["group","supergroup"]
 )
-def guard_group_messages(message: telebot.types.Message):
+async def guard_group_messages(message: types.Message):
     """
     Если пользователь не зарегистрирован в боте (не делал /start), то удаляем его сообщение.
     Затем посылаем предупреждение со ссылкой на бота.
@@ -144,7 +150,7 @@ def guard_group_messages(message: telebot.types.Message):
     if not user_db:
         # 1) Удаляем сообщение пользователя
         try:
-            bot.delete_message(message.chat.id, message.message_id)
+            await bot.delete_message(message.chat.id, message.message_id)
         except:
             pass
 
@@ -153,7 +159,7 @@ def guard_group_messages(message: telebot.types.Message):
             old_chat_id, old_msg_id, old_timer = warn_messages[message.from_user.id]
             # Удаляем старое предупреждение
             try:
-                bot.delete_message(old_chat_id, old_msg_id)
+                await bot.delete_message(old_chat_id, old_msg_id)
             except:
                 pass
             if old_timer.is_alive():
@@ -162,7 +168,7 @@ def guard_group_messages(message: telebot.types.Message):
 
         # 3) Отправляем новое предупреждение
         # Кнопка «↩️ Перейти в бота»
-        bot_username = bot.get_me().username
+        bot_username = (await bot.get_me()).username
         inline_kb = types.InlineKeyboardMarkup()
         inline_kb.add(
             types.InlineKeyboardButton(
@@ -177,7 +183,7 @@ def guard_group_messages(message: telebot.types.Message):
             "Перейдите в бота и нажмите /start."
         )
 
-        warn_msg = bot.send_message(
+        warn_msg = await bot.send_message(
             message.chat.id,
             warn_text,
             parse_mode="Markdown",
@@ -185,16 +191,19 @@ def guard_group_messages(message: telebot.types.Message):
         )
 
         # 4) Запускаем таймер на 2 минуты, после чего предупреждение удалится
-        def delete_warning(chat_id_val, msg_id_val, user_id_val):
+        async def delete_warning(chat_id_val, msg_id_val, user_id_val):
             try:
-                bot.delete_message(chat_id_val, msg_id_val)
+                await bot.delete_message(chat_id_val, msg_id_val)
             except:
                 pass
             # Убираем запись из словаря
             if user_id_val in warn_messages:
                 del warn_messages[user_id_val]
 
-        t = threading.Timer(120, delete_warning, args=(message.chat.id, warn_msg.message_id, message.from_user.id))
+        def delete_warning_sync(chat_id_val, msg_id_val, user_id_val):
+            asyncio.run(delete_warning(chat_id_val, msg_id_val, user_id_val))
+
+        t = threading.Timer(120, delete_warning_sync, args=(message.chat.id, warn_msg.message_id, message.from_user.id))
         t.start()
 
         # 5) Запоминаем, чтобы при повторной попытке удалить и заменить
@@ -206,8 +215,8 @@ def guard_group_messages(message: telebot.types.Message):
 
 # ========================= Сделки (покупка/продажа) =========================
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_ad_"))
-def handle_buy_ad(call: telebot.types.CallbackQuery):
+@dp.callback_query(func=lambda call: call.data.startswith("buy_ad_"))
+async def handle_buy_ad(call: types.CallbackQuery):
     """
     Пользователь нажал «Купить».
     1) Если нажатие было в группе/канале — просим перейти в ЛС бота.
@@ -217,33 +226,33 @@ def handle_buy_ad(call: telebot.types.CallbackQuery):
     try:
         ad_id = int(ad_id_str)
     except:
-        bot.answer_callback_query(call.id, "Некорректный ID объявления.", show_alert=True)
-        return
+        await bot.answer_callback_query(call.id, "Некорректный ID объявления.", show_alert=True)
+        return None
 
     # Если нажали в группе, просим перейти в ЛС
     if call.message.chat.type != "private":
-        bot.answer_callback_query(
+        return await bot.answer_callback_query(
             call.id,
             "Чтобы купить, перейдите в личные сообщения с ботом!",
             show_alert=True
         )
-        return
 
     # Если это ЛС, уточняем
     kb = types.InlineKeyboardMarkup()
     kb.add(
-        types.InlineKeyboardButton("Подтвердить покупку", callback_data=f"confirm_buy_ad_{ad_id}"),
-        types.InlineKeyboardButton("Отмена", callback_data=f"cancel_buy_ad_{ad_id}")
+        types.InlineKeyboardButton(text="Подтвердить покупку", callback_data=f"confirm_buy_ad_{ad_id}"),
+        types.InlineKeyboardButton(text="Отмена", callback_data=f"cancel_buy_ad_{ad_id}")
     )
-    bot.answer_callback_query(call.id)
-    bot.send_message(
+    await bot.answer_callback_query(call.id)
+    return await bot.send_message(
         call.from_user.id,
         f"Вы действительно хотите купить объявление #{ad_id}? Подтвердите:",
         reply_markup=kb
     )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_buy_ad_") or call.data.startswith("cancel_buy_ad_"))
-def handle_confirm_buy_ad(call: telebot.types.CallbackQuery):
+
+@dp.callback_query(func=lambda call: call.data.startswith("confirm_buy_ad_") or call.data.startswith("cancel_buy_ad_"))
+async def handle_confirm_buy_ad(call: types.CallbackQuery):
     """
     Обрабатываем «Подтвердить покупку» / «Отменить покупку».
     """
@@ -257,29 +266,24 @@ def handle_confirm_buy_ad(call: telebot.types.CallbackQuery):
     try:
         ad_id = int(ad_id_str)
     except:
-        bot.answer_callback_query(call.id, "Некорректный ID объявления.", show_alert=True)
-        return
+        return await bot.answer_callback_query(call.id, "Некорректный ID объявления.", show_alert=True)
 
     with SessionLocal() as session:
         ad_obj = session.query(Ad).filter_by(id=ad_id).first()
         if not ad_obj:
-            bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
         if ad_obj.user_id == call.from_user.id:
-            bot.answer_callback_query(call.id, "Нельзя купить собственное объявление!", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нельзя купить собственное объявление!", show_alert=True)
         if ad_obj.status != "approved":
-            bot.answer_callback_query(call.id, "Объявление не одобрено или уже недоступно.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Объявление не одобрено или уже недоступно.", show_alert=True)
 
         buyer_id = call.from_user.id
         seller_id = ad_obj.user_id
 
         if action == "cancel":
             # Покупка отменена
-            bot.answer_callback_query(call.id, "Вы отменили покупку.")
-            bot.send_message(buyer_id, "Покупка отменена.")
-            return
+            await bot.answer_callback_query(call.id, "Вы отменили покупку.")
+            return await bot.send_message(buyer_id, "Покупка отменена.")
 
         # Иначе подтверждение покупки -> резервируем деньги
         from utils import reserve_funds_for_sale
@@ -288,11 +292,11 @@ def handle_confirm_buy_ad(call: telebot.types.CallbackQuery):
             # Сделка -> pending
             kb_buyer = types.InlineKeyboardMarkup()
             kb_buyer.add(
-                types.InlineKeyboardButton("Принять сделку", callback_data=f"confirm_deal_{ad_obj.id}"),
-                types.InlineKeyboardButton("Отклонить сделку", callback_data=f"cancel_deal_{ad_obj.id}")
+                types.InlineKeyboardButton(text="Принять сделку", callback_data=f"confirm_deal_{ad_obj.id}"),
+                types.InlineKeyboardButton(text="Отклонить сделку", callback_data=f"cancel_deal_{ad_obj.id}")
             )
-            bot.answer_callback_query(call.id, "Средства зарезервированы! Ожидается завершение сделки.")
-            bot.send_message(
+            await bot.answer_callback_query(call.id, "Средства зарезервированы! Ожидается завершение сделки.")
+            await bot.send_message(
                 buyer_id,
                 f"Вы хотите купить «{ad_obj.inline_button_text or ('товар #' + str(ad_id))}».\n"
                 f"Сумма {ad_obj.price} руб. зарезервирована (статус сделки: pending).\n\n"
@@ -302,17 +306,17 @@ def handle_confirm_buy_ad(call: telebot.types.CallbackQuery):
             )
             # Оповещаем продавца
             mention_buyer = f"@{call.from_user.username}" if call.from_user.username else buyer_id
-            bot.send_message(
+            return await bot.send_message(
                 seller_id,
                 f"Пользователь {mention_buyer} хочет купить ваше объявление #{ad_obj.id}.\n"
                 f"Сумма {ad_obj.price} руб. зарезервирована.\nОжидается завершение сделки."
             )
         else:
             # Ошибка при резервировании
-            bot.answer_callback_query(call.id, result, show_alert=True)
+            return await bot.answer_callback_query(call.id, result, show_alert=True)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_deal_") or call.data.startswith("cancel_deal_"))
-def handle_deal_confirmation(call: telebot.types.CallbackQuery):
+@dp.callback_query(func=lambda call: call.data.startswith("confirm_deal_") or call.data.startswith("cancel_deal_"))
+async def handle_deal_confirmation(call: types.CallbackQuery):
     """
     «Принять сделку» -> деньги уходят продавцу
     «Отклонить сделку» -> деньги возвращаются покупателю
@@ -327,39 +331,36 @@ def handle_deal_confirmation(call: telebot.types.CallbackQuery):
     try:
         ad_id = int(ad_id_str)
     except:
-        bot.answer_callback_query(call.id, "Некорректный ID сделки", show_alert=True)
-        return
+        return await bot.answer_callback_query(call.id, "Некорректный ID сделки", show_alert=True)
 
     with SessionLocal() as session:
         sale_obj = session.query(Sale).filter_by(ad_id=ad_id, buyer_id=call.from_user.id, status="pending").first()
         if not sale_obj:
-            bot.answer_callback_query(call.id, "Сделка не найдена или уже обработана.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Сделка не найдена или уже обработана.", show_alert=True)
 
         ad_obj = session.query(Ad).filter_by(id=ad_id).first()
         buyer = session.query(User).filter_by(id=sale_obj.buyer_id).first()
         seller = session.query(User).filter_by(id=sale_obj.seller_id).first()
 
         if not ad_obj or not buyer or not seller:
-            bot.answer_callback_query(call.id, "Объявление или участники сделки не найдены.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Объявление или участники сделки не найдены.", show_alert=True)
 
         if action == "confirm":
             sale_obj.status = "completed"
             seller.balance = seller.balance + sale_obj.amount
             session.commit()
 
-            bot.answer_callback_query(call.id, "Сделка подтверждена! Деньги переведены продавцу.")
+            await bot.answer_callback_query(call.id, "Сделка подтверждена! Деньги переведены продавцу.")
             # Уведомляем стороны
             mention_buyer = f"@{buyer.username}" if buyer.username else buyer.id
             mention_seller = f"@{seller.username}" if seller.username else seller.id
 
-            bot.send_message(
+            await bot.send_message(
                 seller.id,
                 f"Покупатель {mention_buyer} подтвердил сделку по объявлению #{ad_id}.\n"
                 f"Вам зачислено {sale_obj.amount} руб."
             )
-            bot.send_message(
+            return await bot.send_message(
                 buyer.id,
                 f"Сделка #{sale_obj.id} подтверждена. {sale_obj.amount} руб. переведено продавцу ({mention_seller})."
             )
@@ -369,22 +370,22 @@ def handle_deal_confirmation(call: telebot.types.CallbackQuery):
             buyer.balance = buyer.balance + sale_obj.amount
             session.commit()
 
-            bot.answer_callback_query(call.id, "Сделка отменена, деньги возвращены покупателю.")
+            await bot.answer_callback_query(call.id, "Сделка отменена, деньги возвращены покупателю.")
             mention_buyer = f"@{buyer.username}" if buyer.username else buyer.id
             mention_seller = f"@{seller.username}" if seller.username else seller.id
 
-            bot.send_message(
+            await bot.send_message(
                 seller.id,
                 f"Покупатель {mention_buyer} отменил сделку по объявлению #{ad_id}.\n"
                 "Деньги возвращены покупателю."
             )
-            bot.send_message(
+            return await bot.send_message(
                 buyer.id,
                 f"Сделка #{sale_obj.id} отменена, {sale_obj.amount} руб. возвращены на ваш баланс."
             )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("details_ad_"))
-def handle_details_ad(call: telebot.types.CallbackQuery):
+@dp.callback_query(func=lambda call: call.data.startswith("details_ad_"))
+async def handle_details_ad(call: types.CallbackQuery):
     """
     Кнопка «Подробнее» по объявлению
     """
@@ -392,14 +393,12 @@ def handle_details_ad(call: telebot.types.CallbackQuery):
     try:
         ad_id = int(ad_id_str)
     except:
-        bot.answer_callback_query(call.id, "Некорректный ID объявления", show_alert=True)
-        return
+        return await bot.answer_callback_query(call.id, "Некорректный ID объявления", show_alert=True)
 
     with SessionLocal() as session:
         ad_obj = session.query(Ad).filter_by(id=ad_id).first()
         if not ad_obj:
-            bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
         user_obj = ad_obj.user
         caption = (
@@ -417,22 +416,22 @@ def handle_details_ad(call: telebot.types.CallbackQuery):
 
         kb = types.InlineKeyboardMarkup()
         buy_btn_text = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
-        kb.add(types.InlineKeyboardButton(buy_btn_text, callback_data=f"buy_ad_{ad_obj.id}"))
-        kb.add(types.InlineKeyboardButton("Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
-        kb.add(types.InlineKeyboardButton("Отзывы о продавце", callback_data=f"viewfeedback_seller_{ad_obj.user_id}"))
+        kb.add(types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_obj.id}"))
+        kb.add(types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
+        kb.add(types.InlineKeyboardButton(text="Отзывы о продавце", callback_data=f"viewfeedback_seller_{ad_obj.user_id}"))
 
-    bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, caption, reply_markup=kb)
+    await bot.answer_callback_query(call.id)
+    return await bot.send_message(call.message.chat.id, caption, reply_markup=kb)
 
 #------------------------------
 #DELETE MESSAGES
 #------------------------------
-@bot.message_handler(
+@dp.message(
     content_types=["text", "photo", "sticker", "video",
                    "document", "voice", "animation"],
     func=lambda m: m.chat.type in ["group", "supergroup"]
 )
-def guard_group_messages(message: telebot.types.Message):
+async def guard_group_messages(message: types.Message):
     """
     • Пропускаем администраторов/создателя группы и сообщения от имени канала.
     • Если пользователь ещё не нажимал /start – удаляем его сообщение
@@ -452,7 +451,7 @@ def guard_group_messages(message: telebot.types.Message):
 
     # --- администраторы / создатель – им писать можно
     try:
-        member = bot.get_chat_member(message.chat.id, user_id)
+        member = await bot.get_chat_member(message.chat.id, user_id)
         if member.status in ("administrator", "creator"):
             return
     except Exception:
@@ -468,7 +467,7 @@ def guard_group_messages(message: telebot.types.Message):
 
     # 1) удаляем исходное сообщение
     try:
-        bot.delete_message(message.chat.id, message.message_id)
+        await bot.delete_message(message.chat.id, message.message_id)
     except Exception:
         pass
 
@@ -477,28 +476,28 @@ def guard_group_messages(message: telebot.types.Message):
     if old:
         old_chat_id, old_msg_id, old_timer = old
         try:
-            bot.delete_message(old_chat_id, old_msg_id)
+            await bot.delete_message(old_chat_id, old_msg_id)
         except Exception:
             pass
         if old_timer.is_alive():
             old_timer.cancel()
 
     # 3) формируем новое предупреждение
-    bot_username = bot.get_me().username
+    bot_username = (await bot.get_me()).username
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
         types.InlineKeyboardButton(
-            "↩️ Перейти в бота / Принять соглашение",
+            text="↩️ Перейти в бота / Принять соглашение",
             url=f"https://t.me/{bot_username}?start=1"
         )
     )
     kb.add(
         types.InlineKeyboardButton(
-            "📄 Польз. соглашение ADIX",
+            text="📄 Польз. соглашение ADIX",
             url="https://telegra.ph/Polzovatelskoe-soglashenie-03-25-9"
         ),
         types.InlineKeyboardButton(
-            "💬 Соглашение Чатов ADIX",
+            text="💬 Соглашение Чатов ADIX",
             url="https://telegra.ph/Obshchie-polozheniya-03-25"
         )
     )
@@ -509,7 +508,7 @@ def guard_group_messages(message: telebot.types.Message):
         "Перейдите в бота и нажмите /start."
     )
 
-    warn_msg = bot.send_message(
+    warn_msg = await bot.send_message(
         message.chat.id,
         warn_text,
         parse_mode="Markdown",
@@ -517,16 +516,19 @@ def guard_group_messages(message: telebot.types.Message):
     )
 
     # 4) таймер: удаляем предупреждение через 2 минуты
-    def delete_warning(chat_id_val, msg_id_val, uid_val):
+    async def delete_warning(chat_id_val, msg_id_val, uid_val):
         try:
-            bot.delete_message(chat_id_val, msg_id_val)
+            await bot.delete_message(chat_id_val, msg_id_val)
         except Exception:
             pass
         warn_messages.pop(uid_val, None)
 
+    def delete_warning_sync(chat_id_val, msg_id_val, uid_val):
+        asyncio.run(delete_warning(chat_id_val, msg_id_val, uid_val))
+
     timer = threading.Timer(
         120,
-        delete_warning,
+        delete_warning_sync,
         args=(message.chat.id, warn_msg.message_id, user_id)
     )
     timer.start()
@@ -534,7 +536,10 @@ def guard_group_messages(message: telebot.types.Message):
     # 5) сохраняем, чтобы потом корректно удалить/обновить
     warn_messages[user_id] = (message.chat.id, warn_msg.message_id, timer)
 
+async def main() -> None:
+    # skip_pending=True, чтобы «очищать» старые «висящие» апдейты
+    await dp.start_polling(bot, skip_updates=True)
+    # bot.polling(none_stop=True, skip_pending=True)
 
 if __name__ == "__main__":
-    # skip_pending=True, чтобы «очищать» старые «висящие» апдейты
-    bot.polling(none_stop=True, skip_pending=True)
+    asyncio.run(main())

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import telebot
-from telebot import types
+from aiogram import Bot, Dispatcher, types
 from config import ADMIN_IDS, MODERATION_GROUP_ID, MARKETING_GROUP_ID
 from database import SessionLocal, User, Ad, ChatGroup, AdFeedback, ScheduledPost, Sale, TopUp, Withdrawal
 from database import SupportTicket, SupportMessage, AdComplaint
@@ -18,12 +17,11 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-def register_admin_handlers(bot: telebot.TeleBot):
-    @bot.message_handler(commands=["admin"])
-    def admin_menu(message: telebot.types.Message):
+def register_admin_handlers(bot: Bot, dp: Dispatcher):
+    @dp.message(commands=["admin"])
+    async def admin_menu(message: types.Message):
         if not is_admin(message.chat.id):
-            bot.send_message(message.chat.id, "Нет прав для доступа к админ-меню.")
-            return
+            return await bot.send_message(message.chat.id, "Нет прав для доступа к админ-меню.")
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Управление балансом", "Последние заказы")
         kb.row("Рассылка", "Забанить/Разбанить")
@@ -31,51 +29,49 @@ def register_admin_handlers(bot: telebot.TeleBot):
         kb.row("Управление чатами", "Управление поддержкой")
         kb.row("Редактировать профиль пользователя")
         kb.row("Главное меню")
-        bot.send_message(message.chat.id, "Админ-меню:", reply_markup=kb)
+        return await bot.send_message(message.chat.id, "Админ-меню:", reply_markup=kb)
 
     # ------------------------------------------------------------------------
     #            УДАЛИТЬ (ДЕАКТИВИРОВАТЬ) ОБЪЯВЛЕНИЕ
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Удалить объявление")
-    def admin_deactivate_ad(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Удалить объявление")
+    async def admin_deactivate_ad(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(message.chat.id, "Введите ID объявления для деактивации:")
-        bot.register_next_step_handler(msg, process_admin_deactivate_ad)
+        msg = await bot.send_message(message.chat.id, "Введите ID объявления для деактивации:")
+        await bot.register_next_step_handler(msg, process_admin_deactivate_ad)
 
-    def process_admin_deactivate_ad(message: telebot.types.Message):
+    async def process_admin_deactivate_ad(message: types.Message):
         chat_id = message.chat.id
         try:
             ad_id = int(message.text.strip())
         except ValueError:
-            bot.send_message(chat_id, "❌ Некорректный ID.")
-            return
+            return await bot.send_message(chat_id, "❌ Некорректный ID.")
 
         with SessionLocal() as session:
             ad = session.query(Ad).get(ad_id)
             if not ad:
-                bot.send_message(chat_id, f"❌ Объявление #{ad_id} не найдено.")
-                return
+                return await bot.send_message(chat_id, f"❌ Объявление #{ad_id} не найдено.")
             ad.is_active = False
             session.commit()
 
-        bot.send_message(chat_id, f"✅ Объявление #{ad_id} деактивировано.")
+        await bot.send_message(chat_id, f"✅ Объявление #{ad_id} деактивировано.")
         try:
-            bot.send_message(ad.user_id,
-                             f"Ваше объявление #{ad_id} было деактивировано администратором.")
+            return await bot.send_message(ad.user_id,
+                                   f"Ваше объявление #{ad_id} было деактивировано администратором.")
         except:
-            pass
+            return None
 
     # ------------------------------------------------------------------------
     #      Одобрить / Отклонить продление
     # ------------------------------------------------------------------------
-    @bot.callback_query_handler(
+    @dp.callback_query(
         func=lambda c: c.data.startswith("approve_ext_") or c.data.startswith("reject_ext_")
     )
-    def handle_extension_request(call: telebot.types.CallbackQuery):
+    async def handle_extension_request(call: types.CallbackQuery):
         admin_id = call.from_user.id
         if not is_admin(admin_id):
-            return bot.answer_callback_query(call.id, "Нет прав.", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Нет прав.", show_alert=True)
 
         parts = call.data.split("_")  # ['approve','ext','123']
         action, _, ad_id_str = parts
@@ -84,51 +80,48 @@ def register_admin_handlers(bot: telebot.TeleBot):
         with SessionLocal() as session:
             ad = session.query(Ad).get(ad_id)
             if not ad:
-                bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
             # снимем кнопки под заявкой
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            await bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
 
             if action == "approve":
                 ad.is_active = True
                 ad.created_at = datetime.utcnow()
                 session.commit()
 
-                bot.send_message(admin_id, f"✅ Продление объявления #{ad_id} одобрено.")
-                bot.send_message(ad.user_id, f"Ваше объявление #{ad_id} продлено на 30 дней и снова активно!")
+                await bot.send_message(admin_id, f"✅ Продление объявления #{ad_id} одобрено.")
+                await bot.send_message(ad.user_id, f"Ваше объявление #{ad_id} продлено на 30 дней и снова активно!")
             else:
-                bot.send_message(admin_id, f"❌ Продление объявления #{ad_id} отклонено.")
-                bot.send_message(ad.user_id, f"К сожалению, продление объявления #{ad_id} отклонено администратором.")
+                await bot.send_message(admin_id, f"❌ Продление объявления #{ad_id} отклонено.")
+                await bot.send_message(ad.user_id, f"К сожалению, продление объявления #{ad_id} отклонено администратором.")
 
-        bot.answer_callback_query(call.id)
+        return await bot.answer_callback_query(call.id)
 
     # ------------------------------------------------------------------------
     #            УПРАВЛЕНИЕ БАЛАНСОМ
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Управление балансом")
-    def admin_balance(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Управление балансом")
+    async def admin_balance(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(message.chat.id, "Введите *ID пользователя*:", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_balance_user)
+        msg = await bot.send_message(message.chat.id, "Введите *ID пользователя*:", parse_mode="Markdown")
+        await bot.register_next_step_handler(msg, process_admin_balance_user)
 
-    def process_admin_balance_user(message: telebot.types.Message):
+    async def process_admin_balance_user(message: types.Message):
         try:
             tid = int(message.text)
         except:
-            bot.send_message(message.chat.id, "Некорректный ID.")
-            return
-        msg = bot.send_message(message.chat.id, "Введите сумму (или +100 / -50 и т.п.):")
-        bot.register_next_step_handler(msg, process_admin_balance_value, tid)
+            return await bot.send_message(message.chat.id, "Некорректный ID.")
+        msg = await bot.send_message(message.chat.id, "Введите сумму (или +100 / -50 и т.п.):")
+        return await bot.register_next_step_handler(msg, process_admin_balance_value, tid)
 
-    def process_admin_balance_value(message: telebot.types.Message, target_user_id):
+    async def process_admin_balance_value(message: types.Message, target_user_id):
         val_str = message.text.strip()
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=target_user_id).first()
             if not user:
-                bot.send_message(message.chat.id, "Пользователь не найден.")
-                return
+                return await bot.send_message(message.chat.id, "Пользователь не найден.")
             try:
                 if val_str.startswith("+") or val_str.startswith("-"):
                     delta = float(val_str)
@@ -137,23 +130,21 @@ def register_admin_handlers(bot: telebot.TeleBot):
                     new_val = float(val_str)
                     user.balance = new_val
                 session.commit()
+                return await bot.send_message(message.chat.id, "Баланс изменён.")
             except:
-                bot.send_message(message.chat.id, "Ошибка при обработке баланса.")
-                return
-        bot.send_message(message.chat.id, "Баланс изменён.")
+                return await bot.send_message(message.chat.id, "Ошибка при обработке баланса.")
 
     # ------------------------------------------------------------------------
     #            ПОСЛЕДНИЕ ЗАКАЗЫ
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Последние заказы")
-    def admin_orders(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Последние заказы")
+    async def admin_orders(message: types.Message):
         if not is_admin(message.chat.id):
-            return
+            return None
         with SessionLocal() as session:
             sales = session.query(Sale).order_by(Sale.created_at.desc()).limit(10).all()
             if not sales:
-                bot.send_message(message.chat.id, "Заказов нет.")
-                return
+                return await bot.send_message(message.chat.id, "Заказов нет.")
             for s in sales:
                 st_text = rus_status(s.status)
                 info = (
@@ -162,57 +153,54 @@ def register_admin_handlers(bot: telebot.TeleBot):
                     f"Сумма: {s.amount}, Статус: {st_text}\n"
                     f"Дата: {s.created_at}"
                 )
-                bot.send_message(message.chat.id, info)
-        bot.send_message(message.chat.id, "Конец списка.")
+                await bot.send_message(message.chat.id, info)
+        return await bot.send_message(message.chat.id, "Конец списка.")
 
     # ------------------------------------------------------------------------
     #            РАССЫЛКА
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Рассылка")
-    def admin_broadcast(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Рассылка")
+    async def admin_broadcast(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(message.chat.id, "Текст рассылки:")
-        bot.register_next_step_handler(msg, process_admin_broadcast_text)
+        msg = await bot.send_message(message.chat.id, "Текст рассылки:")
+        await bot.register_next_step_handler(msg, process_admin_broadcast_text)
 
-    def process_admin_broadcast_text(message: telebot.types.Message):
+    async def process_admin_broadcast_text(message: types.Message):
         txt = message.text.strip()
         with SessionLocal() as session:
             # Рассылку шлём только незаблокированным
             users = session.query(User).filter_by(is_banned=False).all()
             for u in users:
                 try:
-                    bot.send_message(u.id, txt)
+                    await bot.send_message(u.id, txt)
                 except:
                     pass
-        bot.send_message(message.chat.id, "Рассылка завершена.")
+        await bot.send_message(message.chat.id, "Рассылка завершена.")
 
     # ------------------------------------------------------------------------
     #            ЗАБАНИТЬ/РАЗБАНИТЬ (из меню)
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Забанить/Разбанить")
-    def admin_ban_unban(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Забанить/Разбанить")
+    async def admin_ban_unban(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(message.chat.id, "Введите: `user_id ban` или `user_id unban`")
-        bot.register_next_step_handler(msg, process_admin_ban_unban)
+        msg = await bot.send_message(message.chat.id, "Введите: `user_id ban` или `user_id unban`")
+        await bot.register_next_step_handler(msg, process_admin_ban_unban)
 
-    def process_admin_ban_unban(message: telebot.types.Message):
+    async def process_admin_ban_unban(message: types.Message):
         parts = message.text.split()
         if len(parts) != 2:
-            bot.send_message(message.chat.id, "Неверный формат. Нужен: <id> ban|unban")
-            return
+            return await bot.send_message(message.chat.id, "Неверный формат. Нужен: <id> ban|unban")
         try:
             uid = int(parts[0])
             action = parts[1]
         except:
-            bot.send_message(message.chat.id, "Неверные данные.")
-            return
+            return await bot.send_message(message.chat.id, "Неверные данные.")
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=uid).first()
             if not user:
-                bot.send_message(message.chat.id, "Пользователь не найден.")
-                return
+                return await bot.send_message(message.chat.id, "Пользователь не найден.")
             if action.lower() == "ban":
                 user.is_banned = True
             elif action.lower() == "unban":
@@ -220,96 +208,88 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 user.ban_reason = None
                 user.ban_until = None
             else:
-                bot.send_message(message.chat.id, "Неизвестная команда (ожидается ban или unban).")
-                return
+                return await bot.send_message(message.chat.id, "Неизвестная команда (ожидается ban или unban).")
             session.commit()
-        bot.send_message(message.chat.id, f"Пользователь {uid} -> {action}.")
+        return await bot.send_message(message.chat.id, f"Пользователь {uid} -> {action}.")
 
     # ------------------------------------------------------------------------
     #            РЕДАКТИРОВАТЬ ОБЪЯВЛЕНИЯ
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Редактировать объявления")
-    def admin_edit_ads(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Редактировать объявления")
+    async def admin_edit_ads(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(message.chat.id, "Введите: ID_объявления|Новый текст.\nНапример: `12|Новый текст`")
-        bot.register_next_step_handler(msg, process_admin_edit_ad)
+        msg = await bot.send_message(message.chat.id, "Введите: ID_объявления|Новый текст.\nНапример: `12|Новый текст`")
+        await bot.register_next_step_handler(msg, process_admin_edit_ad)
 
-    def process_admin_edit_ad(message: telebot.types.Message):
+    async def process_admin_edit_ad(message: types.Message):
         if "|" not in message.text:
-            bot.send_message(message.chat.id, "Неверный формат. Нужно указать `|` между ID и текстом.")
-            return
+            return await bot.send_message(message.chat.id, "Неверный формат. Нужно указать `|` между ID и текстом.")
         ad_id_str, new_text = message.text.split("|", 1)
         try:
             ad_id = int(ad_id_str.strip())
         except:
-            bot.send_message(message.chat.id, "Неверный ID объявления (не число).")
-            return
+            return await bot.send_message(message.chat.id, "Неверный ID объявления (не число).")
         new_text = new_text.strip()
         with SessionLocal() as session:
             ad_obj = session.query(Ad).filter_by(id=ad_id).first()
             if not ad_obj:
-                bot.send_message(message.chat.id, "Объявление не найдено.")
-                return
+                return await bot.send_message(message.chat.id, "Объявление не найдено.")
             ad_obj.text = new_text
             session.commit()
-        bot.send_message(message.chat.id, f"Объявление #{ad_id} обновлено.")
+        return await bot.send_message(message.chat.id, f"Объявление #{ad_id} обновлено.")
 
     # ------------------------------------------------------------------------
     #            УПРАВЛЕНИЕ ЧАТАМИ
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Управление чатами")
-    def admin_manage_chats(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Управление чатами")
+    async def admin_manage_chats(message: types.Message):
         if not is_admin(message.chat.id):
             return
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Добавить чат", "Список чатов", "Удалить чат")
         kb.row("Загрузить чаты (Excel/CSV)")
         kb.row("Главное меню")
-        bot.send_message(message.chat.id, "Управление чатами:", reply_markup=kb)
+        await bot.send_message(message.chat.id, "Управление чатами:", reply_markup=kb)
 
-    @bot.message_handler(func=lambda m: m.text == "Добавить чат")
-    def admin_add_chat(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Добавить чат")
+    async def admin_add_chat(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(
+        msg = await bot.send_message(
             message.chat.id,
             "Введите: chat_id, название, цена\nНапример: `-10012345, МойЧат, 50`"
         )
-        bot.register_next_step_handler(msg, process_admin_add_chat)
+        await bot.register_next_step_handler(msg, process_admin_add_chat)
 
-    def process_admin_add_chat(message: telebot.types.Message):
+    async def process_admin_add_chat(message: types.Message):
         parts = message.text.split(",")
         if len(parts) != 3:
-            bot.send_message(message.chat.id, "Неверный формат. Нужно 3 значения: <chat_id>, <название>, <цена>.")
-            return
+            return await bot.send_message(message.chat.id, "Неверный формат. Нужно 3 значения: <chat_id>, <название>, <цена>.")
         try:
             chat_id_val = int(parts[0].strip())
             title = parts[1].strip()
             price = float(parts[2].strip())
         except:
-            bot.send_message(message.chat.id, "Неверные данные (chat_id или price не числа).")
-            return
+            return await bot.send_message(message.chat.id, "Неверные данные (chat_id или price не числа).")
 
         if abs(price) > 99999999.99:
-            bot.send_message(message.chat.id, f"Слишком большая цена ({price}). Чат пропущен.")
-            return
+            return await bot.send_message(message.chat.id, f"Слишком большая цена ({price}). Чат пропущен.")
 
         with SessionLocal() as session:
             cg = ChatGroup(chat_id=chat_id_val, title=title, price=price, is_active=True)
             session.add(cg)
             session.commit()
-        bot.send_message(message.chat.id, f"Чат '{title}' добавлен!")
+        return await bot.send_message(message.chat.id, f"Чат '{title}' добавлен!")
 
-    @bot.message_handler(func=lambda m: m.text == "Список чатов")
-    def admin_list_chats(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Список чатов")
+    async def admin_list_chats(message: types.Message):
         if not is_admin(message.chat.id):
-            return
+            return None
         with SessionLocal() as session:
             chats = session.query(ChatGroup).all()
             if not chats:
-                bot.send_message(message.chat.id, "Чатов нет в базе.")
-                return
+                return await bot.send_message(message.chat.id, "Чатов нет в базе.")
 
         def detect_region(title: str) -> str:
             low = title.lower()
@@ -340,64 +320,60 @@ def register_admin_handlers(bot: telebot.TeleBot):
                         f"Цена={c.price}, Активен={c.is_active}\n")
                 result_text += line
 
-        def send_in_chunks(chat_id_val, text, chunk_size=4000):
+        async def send_in_chunks(chat_id_val, text, chunk_size=4000):
             idx = 0
             length = len(text)
             while idx < length:
-                bot.send_message(chat_id_val, text[idx:idx+chunk_size])
+                await bot.send_message(chat_id_val, text[idx:idx+chunk_size])
                 idx += chunk_size
 
         if not result_text.strip():
-            bot.send_message(message.chat.id, "Чатов нет в базе.")
-            return
+            return await bot.send_message(message.chat.id, "Чатов нет в базе.")
 
-        send_in_chunks(message.chat.id, result_text)
-        bot.send_message(message.chat.id, "Конец списка.")
+        await send_in_chunks(message.chat.id, result_text)
+        return await bot.send_message(message.chat.id, "Конец списка.")
 
-    @bot.message_handler(func=lambda m: m.text == "Удалить чат")
-    def admin_delete_chat(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Удалить чат")
+    async def admin_delete_chat(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(message.chat.id, "Введите ID чата (из БД):")
-        bot.register_next_step_handler(msg, process_admin_delete_chat)
+        msg = await bot.send_message(message.chat.id, "Введите ID чата (из БД):")
+        await bot.register_next_step_handler(msg, process_admin_delete_chat)
 
-    def process_admin_delete_chat(message: telebot.types.Message):
+    async def process_admin_delete_chat(message: types.Message):
         try:
             db_id = int(message.text.strip())
         except:
-            bot.send_message(message.chat.id, "Некорректный ID (не число).")
-            return
+            return await bot.send_message(message.chat.id, "Некорректный ID (не число).")
         with SessionLocal() as session:
             cg = session.query(ChatGroup).filter_by(id=db_id).first()
             if not cg:
-                bot.send_message(message.chat.id, "Чат не найден.")
-                return
+                return await bot.send_message(message.chat.id, "Чат не найден.")
             session.delete(cg)
             session.commit()
-        bot.send_message(message.chat.id, "Чат удалён.")
+        return await bot.send_message(message.chat.id, "Чат удалён.")
 
-    @bot.message_handler(func=lambda m: m.text == "Загрузить чаты (Excel/CSV)")
-    def admin_add_chats_from_excel_csv(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Загрузить чаты (Excel/CSV)")
+    async def admin_add_chats_from_excel_csv(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(
+        msg = await bot.send_message(
             message.chat.id,
             "Пришлите файл Excel (XLSX) или CSV с данными о чатах.\n\n"
             "Формат XLSX: (chat_id, title, price)\n"
             "Формат CSV: Название, Кол-во участников, Цена1, Цена2, ... (и т.д.)"
         )
-        bot.register_next_step_handler(msg, wait_for_document_file)
+        await bot.register_next_step_handler(msg, wait_for_document_file)
 
-    def wait_for_document_file(message: telebot.types.Message):
+    async def wait_for_document_file(message: types.Message):
         if not is_admin(message.chat.id):
-            return
+            return None
 
         if not message.document:
-            bot.send_message(message.chat.id, "Это не файл. Повторите команду.")
-            return
+            return await bot.send_message(message.chat.id, "Это не файл. Повторите команду.")
 
-        file_info = bot.get_file(message.document.file_id)
-        downloaded = bot.download_file(file_info.file_path)
+        file_info = await bot.get_file(message.document.file_id)
+        downloaded = await bot.download_file(file_info.file_path)
         filename = message.document.file_name.lower()
         extension = os.path.splitext(filename)[1]
         file_path = f"temp_chats_{message.chat.id}{extension}"
@@ -405,15 +381,15 @@ def register_admin_handlers(bot: telebot.TeleBot):
             f.write(downloaded)
 
         if extension == ".xlsx":
-            import_chats_from_excel(file_path, message.chat.id)
+            return await import_chats_from_excel(file_path, message.chat.id)
         elif extension == ".csv":
-            import_chats_from_csv(file_path, message.chat.id, bot)
+            return await import_chats_from_csv(file_path, message.chat.id)
         else:
-            bot.send_message(message.chat.id, "Неизвестный формат. Нужен XLSX или CSV.")
+            await bot.send_message(message.chat.id, "Неизвестный формат. Нужен XLSX или CSV.")
             os.remove(file_path)
-            return
+            return None
 
-    def import_chats_from_excel(file_path: str, admin_chat_id: int):
+    async def import_chats_from_excel(file_path: str, admin_chat_id: int):
         """
         Импорт чатов из Excel-файла с тремя листами:
           1-й лист — Москва
@@ -451,12 +427,12 @@ def register_admin_handlers(bot: telebot.TeleBot):
         try:
             wb = openpyxl.load_workbook(file_path, data_only=True)
         except Exception as e:
-            bot.send_message(admin_chat_id, f"❌ Ошибка чтения XLSX: {e}")
+            await bot.send_message(admin_chat_id, f"❌ Ошибка чтения XLSX: {e}")
             os.remove(file_path)
             return
 
         if len(wb.sheetnames) < 3:
-            bot.send_message(admin_chat_id, "❌ В файле должно быть минимум 3 листа.")
+            await bot.send_message(admin_chat_id, "❌ В файле должно быть минимум 3 листа.")
             os.remove(file_path)
             return
 
@@ -529,7 +505,7 @@ def register_admin_handlers(bot: telebot.TeleBot):
         except:
             pass
 
-        bot.send_message(
+        await bot.send_message(
             admin_chat_id,
             f"📥 Импорт завершён.\n"
             f"➕ Добавлено: {rows_added}\n"
@@ -538,9 +514,8 @@ def register_admin_handlers(bot: telebot.TeleBot):
 
 
     # --- импорт CSV ---------------------------------------------------------
-    def import_chats_from_csv(file_path: str,
-                              admin_chat_id: int,
-                              bot: telebot.TeleBot) -> None:
+    async def import_chats_from_csv(file_path: str,
+                                    admin_chat_id: int) -> None:
         """
         Импорт / обновление чатов из CSV.
 
@@ -649,7 +624,7 @@ def register_admin_handlers(bot: telebot.TeleBot):
             pass
 
         # --- отчёт ------------------------------------------------------------
-        bot.send_message(
+        await bot.send_message(
             admin_chat_id,
             f"✅ Импорт CSV завершён.\n"
             f"➕ Добавлено: {rows_added}\n"
@@ -661,17 +636,16 @@ def register_admin_handlers(bot: telebot.TeleBot):
     # ------------------------------------------------------------------------
     #            МОДЕРАЦИЯ ОБЪЯВЛЕНИЙ (approve/reject/edit/publish)
     # ------------------------------------------------------------------------
-    @bot.callback_query_handler(func=lambda call:
+    @dp.callback_query(func=lambda call:
         call.data.startswith("approve_ad_") or
         call.data.startswith("reject_ad_") or
         call.data.startswith("edit_ad_") or
         call.data.startswith("publish_ad_") or
         call.data.startswith("approve_publish_ad_")
     )
-    def handle_moderation_callbacks(call: telebot.types.CallbackQuery):
+    async def handle_moderation_callbacks(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
 
         with SessionLocal() as session:
             data = call.data.split("_", 2)
@@ -679,52 +653,48 @@ def register_admin_handlers(bot: telebot.TeleBot):
             ad_id_str = data[2] if len(data) > 2 else None
 
             if not ad_id_str:
-                bot.answer_callback_query(call.id, "Некорректные данные.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Некорректные данные.", show_alert=True)
 
             try:
                 ad_id = int(ad_id_str)
             except:
-                bot.answer_callback_query(call.id, "Некорректный ID объявления.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Некорректный ID объявления.", show_alert=True)
 
             ad_obj = session.query(Ad).filter_by(id=ad_id).first()
             if not ad_obj:
-                bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
             user_obj = session.query(User).filter_by(id=ad_obj.user_id).first()
 
             if action == "approve_ad":
                 ad_obj.status = "approved"
                 session.commit()
-                bot.answer_callback_query(call.id, "Объявление одобрено.")
                 if user_obj:
-                    bot.send_message(ad_obj.user_id, f"Ваше объявление #{ad_obj.id} теперь «{rus_status('approved')}»!")
+                    await bot.send_message(ad_obj.user_id, f"Ваше объявление #{ad_obj.id} теперь «{rus_status('approved')}»!")
+                return await bot.answer_callback_query(call.id, "Объявление одобрено.")
             elif action == "reject_ad":
                 ad_obj.status = "rejected"
                 session.commit()
-                bot.answer_callback_query(call.id, "Объявление отклонено.")
                 if user_obj:
-                    bot.send_message(ad_obj.user_id, f"Ваше объявление #{ad_obj.id} «{rus_status('rejected')}» админом.")
+                    await bot.send_message(ad_obj.user_id, f"Ваше объявление #{ad_obj.id} «{rus_status('rejected')}» админом.")
+                return await bot.answer_callback_query(call.id, "Объявление отклонено.")
             elif action == "edit_ad":
-                bot.answer_callback_query(call.id, "Введите новый текст объявления в ответ на это сообщение.")
-                msg = bot.send_message(
+                await bot.answer_callback_query(call.id, "Введите новый текст объявления в ответ на это сообщение.")
+                msg = await bot.send_message(
                     call.message.chat.id,
                     f"Редактирование объявления #{ad_id}. Введите новый текст:"
                 )
-                bot.register_next_step_handler(msg, lambda m: process_edit_ad_text(m, ad_id))
+                return await bot.register_next_step_handler(msg, lambda m: process_edit_ad_text(m, ad_id))
             elif action == "publish_ad":
                 if ad_obj.status != "approved":
-                    bot.answer_callback_query(call.id, "Сначала одобрите объявление (approve_ad).", show_alert=True)
-                    return
+                    return await bot.answer_callback_query(call.id, "Сначала одобрите объявление (approve_ad).", show_alert=True)
                 if ad_obj.ad_type == "format2":
                     target_chat = MARKIROVKA_GROUP_ID
                 else:
                     target_chat = MARKETING_GROUP_ID
 
-                post_ad_to_chat(bot, target_chat, ad_obj, user_obj)
-                bot.answer_callback_query(call.id, "Объявление опубликовано!")
+                await post_ad_to_chat(bot, target_chat, ad_obj, user_obj)
+                return await bot.answer_callback_query(call.id, "Объявление опубликовано!")
             elif action == "approve_publish_ad":
                 ad_obj.status = "approved"
                 session.commit()
@@ -733,38 +703,39 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 else:
                     target_chat = MARKETING_GROUP_ID
 
-                post_ad_to_chat(bot, target_chat, ad_obj, user_obj)
-                bot.answer_callback_query(call.id, "Объявление одобрено и опубликовано!")
+                await post_ad_to_chat(bot, target_chat, ad_obj, user_obj)
                 if user_obj:
-                    bot.send_message(ad_obj.user_id, f"Ваше объявление #{ad_obj.id} «{rus_status('approved')}» и опубликовано!")
+                    await bot.send_message(ad_obj.user_id, f"Ваше объявление #{ad_obj.id} «{rus_status('approved')}» и опубликовано!")
+                return await bot.answer_callback_query(call.id, "Объявление одобрено и опубликовано!")
+            else:
+                return None
 
-    def process_edit_ad_text(message: telebot.types.Message, ad_id: int):
+    async def process_edit_ad_text(message: types.Message, ad_id: int):
         new_text = message.text.strip()
         with SessionLocal() as session:
             ad_obj = session.query(Ad).filter_by(id=ad_id).first()
             if not ad_obj:
-                bot.send_message(message.chat.id, "Объявление не найдено при редактировании.")
-                return
+                return await bot.send_message(message.chat.id, "Объявление не найдено при редактировании.")
             ad_obj.text = new_text
             session.commit()
-        bot.send_message(message.chat.id, f"Объявление #{ad_id} отредактировано.")
+        return await bot.send_message(message.chat.id, f"Объявление #{ad_id} отредактировано.")
 
     # ------------------------------------------------------------------------
     #            ОДОБРИТЬ/ОТКЛОНИТЬ ПОПОЛНЕНИЕ
     # ------------------------------------------------------------------------
-    @bot.callback_query_handler(
+    @dp.callback_query(
         func=lambda call: call.data.startswith("approve_topup_") or call.data.startswith("reject_topup_")
     )
-    def handle_topup_approval(call: telebot.types.CallbackQuery):
+    async def handle_topup_approval(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            return bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
 
         # извлекаем ID заявки
         topup_id = int(call.data.split("_")[-1])
         with SessionLocal() as session:
             topup_obj = session.query(TopUp).filter_by(id=topup_id, status="pending").first()
             if not topup_obj:
-                return bot.answer_callback_query(call.id, "Заявка не найдена или уже обработана.", show_alert=True)
+                return await bot.answer_callback_query(call.id, "Заявка не найдена или уже обработана.", show_alert=True)
 
             # подгружаем пользователя
             user_obj = session.query(User).filter_by(id=topup_obj.user_id).first()
@@ -774,7 +745,7 @@ def register_admin_handlers(bot: telebot.TeleBot):
             pay_card = getattr(topup_obj, "card_number", "не указана")
 
             # убираем кнопки одобрения/отклонения под заявкой
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            await bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
 
             if call.data.startswith("approve_topup_"):
                 # зачисляем средства
@@ -783,8 +754,8 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 topup_obj.status = "approved"
                 session.commit()
 
-                bot.answer_callback_query(call.id, "Пополнение одобрено.")
-                bot.send_message(
+                await bot.answer_callback_query(call.id, "Пополнение одобрено.")
+                await bot.send_message(
                     call.message.chat.id,
                     (
                         f"✅ Пополнение #{topup_id} на сумму {topup_obj.amount} руб. одобрено.\n"
@@ -795,7 +766,7 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 )
                 # уведомляем пользователя
                 if user_obj:
-                    bot.send_message(
+                    await bot.send_message(
                         user_obj.id,
                         (
                             f"Ваше пополнение #{topup_id} на сумму {topup_obj.amount} руб. "
@@ -808,8 +779,8 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 topup_obj.status = "rejected"
                 session.commit()
 
-                bot.answer_callback_query(call.id, "Пополнение отклонено.")
-                bot.send_message(
+                await bot.answer_callback_query(call.id, "Пополнение отклонено.")
+                await bot.send_message(
                     call.message.chat.id,
                     (
                         f"❌ Пополнение #{topup_id} пользователем {user_name} "
@@ -818,59 +789,56 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 )
                 # уведомляем пользователя
                 if user_obj:
-                    bot.send_message(
+                    await bot.send_message(
                         user_obj.id,
                         f"Ваше пополнение #{topup_id} на сумму {topup_obj.amount} руб. «{rus_status('rejected')}»."
                     )
         # обязательный ответ на callback_query
-        bot.answer_callback_query(call.id)
+        return await bot.answer_callback_query(call.id)
+
     # ------------------------------------------------------------------------
     #            МОДЕРАЦИЯ ОТЗЫВОВ (approve/reject)
     # ------------------------------------------------------------------------
-    @bot.callback_query_handler(
+    @dp.callback_query(
         func=lambda call: call.data.startswith("approve_feedback_") or call.data.startswith("reject_feedback_")
     )
-    def handle_feedback_moderation(call: telebot.types.CallbackQuery):
+    async def handle_feedback_moderation(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
 
         feedback_id_str = call.data.split("_")[-1]
         try:
             feedback_id = int(feedback_id_str)
         except:
-            bot.answer_callback_query(call.id, "Ошибка ID отзыва.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Ошибка ID отзыва.", show_alert=True)
 
         with SessionLocal() as session:
             fb_obj = session.query(AdFeedback).filter_by(id=feedback_id).first()
             # Предположим, что у feedback есть поле status
             # Если нет — уберите проверку или адаптируйте
             if not fb_obj or getattr(fb_obj, "status", None) != "pending":
-                bot.answer_callback_query(call.id, "Отзыв не найден или уже обработан.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Отзыв не найден или уже обработан.", show_alert=True)
 
             if call.data.startswith("approve_feedback_"):
                 fb_obj.status = "approved"
                 session.commit()
-                bot.answer_callback_query(call.id, "Отзыв одобрен.")
-                bot.send_message(fb_obj.user_id, f"Ваш отзыв #{fb_obj.id} «{rus_status('approved')}»!")
+                await bot.answer_callback_query(call.id, "Отзыв одобрен.")
+                return await bot.send_message(fb_obj.user_id, f"Ваш отзыв #{fb_obj.id} «{rus_status('approved')}»!")
             else:
                 fb_obj.status = "rejected"
                 session.commit()
-                bot.answer_callback_query(call.id, "Отзыв отклонён.")
-                bot.send_message(fb_obj.user_id, f"Ваш отзыв #{fb_obj.id} «{rus_status('rejected')}».")
+                await bot.answer_callback_query(call.id, "Отзыв отклонён.")
+                return await bot.send_message(fb_obj.user_id, f"Ваш отзыв #{fb_obj.id} «{rus_status('rejected')}».")
 
     # ------------------------------------------------------------------------
     #            ОДОБРИТЬ / ОТКЛОНИТЬ ВЫВОД СРЕДСТВ
     # ------------------------------------------------------------------------
-    @bot.callback_query_handler(
+    @dp.callback_query(
         func=lambda call: call.data.startswith("approve_withdraw_") or call.data.startswith("reject_withdraw_")
     )
-    def handle_withdraw_approval(call: telebot.types.CallbackQuery):
+    async def handle_withdraw_approval(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
 
         with SessionLocal() as session:
             if call.data.startswith("approve_withdraw_"):
@@ -878,29 +846,26 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 try:
                     w_id = int(w_id_str)
                 except:
-                    bot.answer_callback_query(call.id, "Некорректный ID вывода.", show_alert=True)
-                    return
+                    return await bot.answer_callback_query(call.id, "Некорректный ID вывода.", show_alert=True)
 
                 wd = session.query(Withdrawal).filter_by(id=w_id, status="pending").first()
                 if not wd:
-                    bot.answer_callback_query(call.id, "Заявка не найдена или уже обработана.", show_alert=True)
-                    return
+                    return await bot.answer_callback_query(call.id, "Заявка не найдена или уже обработана.", show_alert=True)
 
                 user_obj = session.query(User).filter_by(id=wd.user_id).first()
                 if not user_obj:
-                    bot.answer_callback_query(call.id, "Пользователь не найден.", show_alert=True)
-                    return
+                    return await bot.answer_callback_query(call.id, "Пользователь не найден.", show_alert=True)
 
                 user_obj.balance = float(user_obj.balance) - float(wd.amount)
                 wd.status = "approved"
                 session.commit()
 
-                bot.answer_callback_query(call.id, "Вывод одобрен, баланс списан.")
-                bot.send_message(
+                await bot.answer_callback_query(call.id, "Вывод одобрен, баланс списан.")
+                await bot.send_message(
                     call.message.chat.id,
                     f"✅Вывод #{w_id} «{rus_status('approved')}». С пользователя списано {wd.amount} руб."
                 )
-                bot.send_message(
+                return await bot.send_message(
                     wd.user_id,
                     f"Ваши средства ({wd.amount} руб.) отправлены на вывод!\n"
                     f"Баланс обновлён: {user_obj.balance} руб."
@@ -911,71 +876,70 @@ def register_admin_handlers(bot: telebot.TeleBot):
                 try:
                     w_id = int(w_id_str)
                 except:
-                    bot.answer_callback_query(call.id, "Некорректный ID вывода.", show_alert=True)
-                    return
+                    return await bot.answer_callback_query(call.id, "Некорректный ID вывода.", show_alert=True)
 
                 wd = session.query(Withdrawal).filter_by(id=w_id, status="pending").first()
                 if not wd:
-                    bot.answer_callback_query(call.id, "Заявка не найдена или уже обработана.", show_alert=True)
-                    return
+                    return await bot.answer_callback_query(call.id, "Заявка не найдена или уже обработана.", show_alert=True)
 
                 wd.status = "rejected"
                 session.commit()
 
-                bot.answer_callback_query(call.id, "Вывод отклонён.")
-                bot.send_message(
+                await bot.answer_callback_query(call.id, "Вывод отклонён.")
+                await bot.send_message(
                     call.message.chat.id,
                     f"❌Вывод #{w_id} «{rus_status('rejected')}»."
                 )
-                bot.send_message(
+                return await bot.send_message(
                     wd.user_id,
                     f"Ваша заявка на вывод #{w_id} «{rus_status('rejected')}»."
                 )
+            else:
+                return None
 
     # ------------------------------------------------------------------------
     #            УПРАВЛЕНИЕ ПОДДЕРЖКОЙ (ТИКЕТАМИ)
     # ------------------------------------------------------------------------
-    @bot.message_handler(func=lambda m: m.text == "Управление поддержкой")
-    def admin_support_menu(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Управление поддержкой")
+    async def admin_support_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.row("Список открытых тикетов", "Главное меню")
-        bot.send_message(message.chat.id, "Управление тикетами поддержки:", reply_markup=kb)
+        await bot.send_message(message.chat.id, "Управление тикетами поддержки:", reply_markup=kb)
 
-    @bot.message_handler(func=lambda m: m.text == "Список открытых тикетов")
-    def admin_list_tickets(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Список открытых тикетов")
+    async def admin_list_tickets(message: types.Message):
         if not is_admin(message.chat.id):
-            return
+            return None
         with SessionLocal() as session:
             tickets = session.query(SupportTicket).filter(SupportTicket.status == "open").all()
             if not tickets:
-                bot.send_message(message.chat.id, "Нет открытых тикетов.")
-                return
+                return await bot.send_message(message.chat.id, "Нет открытых тикетов.")
 
             kb = types.InlineKeyboardMarkup(row_width=1)
             for t in tickets:
                 btn_txt = f"Тикет #{t.id} от пользователя {t.user_id}"
-                kb.add(types.InlineKeyboardButton(btn_txt, callback_data=f"admin_support_view_{t.id}"))
-            bot.send_message(message.chat.id, "Открытые тикеты:", reply_markup=kb)
+                kb.add(types.InlineKeyboardButton(text=btn_txt, callback_data=f"admin_support_view_{t.id}"))
+            return await bot.send_message(message.chat.id, "Открытые тикеты:", reply_markup=kb)
 
     # ------------------------------------------------------------------
     #   просмотр тикета (админ)
     # ------------------------------------------------------------------
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_support_view_"))
-    def admin_support_view_ticket(call: telebot.types.CallbackQuery):
+    @dp.callback_query(func=lambda c: c.data.startswith("admin_support_view_"))
+    async def admin_support_view_ticket(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            return bot.answer_callback_query(call.id, "Нет прав.")
+            return await bot.answer_callback_query(call.id, "Нет прав.")
 
         try:
             t_id = int(call.data.replace("admin_support_view_", "", 1))
         except ValueError:
-            return bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
 
         with SessionLocal() as s:
             ticket = s.query(SupportTicket).get(t_id)
             if not ticket:
-                return bot.answer_callback_query(call.id, "Тикет не найден.", show_alert=True)
+                return await bot.answer_callback_query(call.id, "Тикет не найден.", show_alert=True)
 
             text_history = "\n\n".join(
                 f"{'Админ' if m.sender_id in ADMIN_IDS else f'Пользователь {m.sender_id}'} "
@@ -984,45 +948,45 @@ def register_admin_handlers(bot: telebot.TeleBot):
             ) or "Сообщений пока нет."
 
         kb = types.InlineKeyboardMarkup(row_width=1)
-        kb.add(types.InlineKeyboardButton("✉ Ответить", callback_data=f"admin_support_reply_{t_id}"),
-               types.InlineKeyboardButton("🛑 Закрыть тикет", callback_data=f"admin_support_close_{t_id}"))
+        kb.add(types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"admin_support_reply_{t_id}"),
+               types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"admin_support_close_{t_id}"))
 
-        bot.edit_message_text(
+        await bot.edit_message_text(
             f"Тикет #{t_id}\nСтатус: {rus_status(ticket.status)}\n\n{text_history}",
             call.message.chat.id, call.message.message_id, reply_markup=kb
         )
-        bot.answer_callback_query(call.id)
+        return await bot.answer_callback_query(call.id)
 
     # ------------------------------------------------------------------
     #   ответ администратора
     # ------------------------------------------------------------------
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_support_reply_"))
-    def admin_support_reply_ticket(call: telebot.types.CallbackQuery):
+    @dp.callback_query(func=lambda c: c.data.startswith("admin_support_reply_"))
+    async def admin_support_reply_ticket(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            return bot.answer_callback_query(call.id)
+            return await bot.answer_callback_query(call.id)
 
         try:
             t_id = int(call.data.replace("admin_support_reply_", "", 1))
         except ValueError:
-            return bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
 
-        bot.answer_callback_query(call.id)
-        msg = bot.send_message(call.message.chat.id,
+        await bot.answer_callback_query(call.id)
+        msg = await bot.send_message(call.message.chat.id,
                                f"Введите ответ для тикета #{t_id}:")
         # передаём t_id через partial, имя функции уже известно
-        bot.register_next_step_handler(msg, partial(_admin_save_ticket_reply, t_id=t_id))
+        return await bot.register_next_step_handler(msg, partial(_admin_save_ticket_reply, t_id=t_id))
 
-    def _admin_save_ticket_reply(message: telebot.types.Message, t_id: int):
+    async def _admin_save_ticket_reply(message: types.Message, t_id: int):
         """Сохраняет ответ админа и уведомляет пользователя."""
         text = (message.text or "").strip()
         if not text:
-            return bot.send_message(message.chat.id, "Пустое сообщение не отправлено.")
+            return await bot.send_message(message.chat.id, "Пустое сообщение не отправлено.")
 
         # ── пишем в БД ─────────────────────────────────────────
         with SessionLocal() as s:
             tk = s.query(SupportTicket).get(t_id)
             if not tk or tk.status == "closed":
-                return bot.send_message(message.chat.id, "Тикет не найден или уже закрыт.")
+                return await bot.send_message(message.chat.id, "Тикет не найден или уже закрыт.")
 
             user_id = tk.user_id  # кешируем до commit/выхода
             s.add(SupportMessage(ticket_id=t_id,
@@ -1032,53 +996,53 @@ def register_admin_handlers(bot: telebot.TeleBot):
 
         # ── уведомляем пользователя ───────────────────────────
         try:
-            bot.send_message(
+            await bot.send_message(
                 user_id,
                 f"[Поддержка] Администратор ответил в тикет #{t_id}:\n{text}"
             )
         except Exception:
             pass
 
-        bot.send_message(message.chat.id, "Ответ отправлен.")
+        return await bot.send_message(message.chat.id, "Ответ отправлен.")
 
     # ------------------------------------------------------------------
     #   закрыть тикет (админ)
     # ------------------------------------------------------------------
-    @bot.callback_query_handler(lambda c: c.data.startswith("admin_support_close_"))
-    def admin_support_close_ticket(call: telebot.types.CallbackQuery):
+    @dp.callback_query(lambda c: c.data.startswith("admin_support_close_"))
+    async def admin_support_close_ticket(call: types.CallbackQuery):
         if not is_admin(call.from_user.id):
-            return bot.answer_callback_query(call.id, "Нет прав")
+            return await bot.answer_callback_query(call.id, "Нет прав")
 
         try:
             t_id = int(call.data.replace("admin_support_close_", "", 1))
         except ValueError:
-            return bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
+            return await bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
 
         # сохраняем user_id до выхода из контекста
         with SessionLocal() as s:
             ticket = s.query(SupportTicket).get(t_id)
             if not ticket or ticket.status == "closed":
-                return bot.answer_callback_query(call.id, "Тикет не найден или уже закрыт.", show_alert=True)
+                return await bot.answer_callback_query(call.id, "Тикет не найден или уже закрыт.", show_alert=True)
 
             user_id = ticket.user_id  # ← кешируем!
             ticket.status = "closed"
             s.commit()
 
-        bot.answer_callback_query(call.id, "Тикет закрыт.")
+        await bot.answer_callback_query(call.id, "Тикет закрыт.")
         try:
-            bot.send_message(user_id, f"Ваш тикет #{t_id} был закрыт администратором.")
+            return await bot.send_message(user_id, f"Ваш тикет #{t_id} был закрыт администратором.")
         except Exception:
-            pass
+            return None
 
     # ------------------------------------------------------------------------
     #            ОБРАБОТКА ЖАЛОБ (complaint_msg_seller_, complaint_del_ad_, complaint_ban_)
     # ------------------------------------------------------------------------
-    @bot.callback_query_handler(func=lambda call:
+    @dp.callback_query(func=lambda call:
         call.data.startswith("complaint_msg_seller_") or
         call.data.startswith("complaint_del_ad_") or
         call.data.startswith("complaint_ban_")
     )
-    def handle_complaint_actions(call: telebot.types.CallbackQuery):
+    async def handle_complaint_actions(call: types.CallbackQuery):
         """
         Жалоба от search.py -> AdComplaint
         Кнопки:
@@ -1087,8 +1051,7 @@ def register_admin_handlers(bot: telebot.TeleBot):
           - «Заблокировать пользователя»
         """
         if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "Нет прав", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Нет прав", show_alert=True)
 
         data = call.data
         if "complaint_msg_seller_" in data:
@@ -1104,19 +1067,16 @@ def register_admin_handlers(bot: telebot.TeleBot):
         try:
             complaint_id = int(c_id_str)
         except:
-            bot.answer_callback_query(call.id, "Некорректный ID жалобы.", show_alert=True)
-            return
+            return await bot.answer_callback_query(call.id, "Некорректный ID жалобы.", show_alert=True)
 
         with SessionLocal() as session:
             comp = session.query(AdComplaint).filter_by(id=complaint_id).first()
             if not comp:
-                bot.answer_callback_query(call.id, "Жалоба не найдена.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Жалоба не найдена.", show_alert=True)
 
             ad_obj = session.query(Ad).filter_by(id=comp.ad_id).first()
             if not ad_obj:
-                bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
-                return
+                return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
             comp.status = "in_progress"
             session.commit()
@@ -1125,57 +1085,55 @@ def register_admin_handlers(bot: telebot.TeleBot):
 
             if action == "msg_seller":
                 # Написать продавцу
-                bot.answer_callback_query(call.id, "Введите сообщение продавцу (ответом на это).")
-                msg = bot.send_message(
+                await bot.answer_callback_query(call.id, "Введите сообщение продавцу (ответом на это).")
+                msg = await bot.send_message(
                     call.message.chat.id,
                     f"Напишите сообщение для продавца #{seller_id}:"
                 )
-                bot.register_next_step_handler(msg, lambda m: process_msg_seller(m, seller_id))
+                await bot.register_next_step_handler(msg, lambda m: process_msg_seller(m, seller_id))
             elif action == "del_ad":
                 ad_obj.status = "rejected"
                 comp.status = "resolved"
                 session.commit()
 
-                bot.answer_callback_query(call.id, "Объявление отклонено/удалено.")
-                bot.send_message(call.message.chat.id, f"Объявление #{ad_obj.id} -> 'rejected'.")
+                await bot.answer_callback_query(call.id, "Объявление отклонено/удалено.")
+                await bot.send_message(call.message.chat.id, f"Объявление #{ad_obj.id} -> 'rejected'.")
             elif action == "ban_user":
-                bot.answer_callback_query(call.id, "Укажите причину и срок (например: 'Мошенничество | 14').")
-                msg = bot.send_message(
+                await bot.answer_callback_query(call.id, "Укажите причину и срок (например: 'Мошенничество | 14').")
+                msg = await bot.send_message(
                     call.message.chat.id,
                     f"Введите причину и срок бана для пользователя #{seller_id}, формат:\n"
                     "`Причина | кол-во_дней` (пример: `Мошенничество | 7`)",
                     parse_mode="Markdown"
                 )
                 # Передаём только complaint_id, чтобы не был "детачнут"
-                bot.register_next_step_handler(msg, lambda m: process_ban_user(m, seller_id, complaint_id))
+                await bot.register_next_step_handler(msg, lambda m: process_ban_user(m, seller_id, complaint_id))
+            return None
 
-    def process_msg_seller(message: telebot.types.Message, seller_id: int):
+    async def process_msg_seller(message: types.Message, seller_id: int):
         text_to_seller = message.text.strip()
         try:
-            bot.send_message(seller_id, f"[Админ]: {text_to_seller}")
-            bot.send_message(message.chat.id, "Сообщение отправлено продавцу.")
+            await bot.send_message(seller_id, f"[Админ]: {text_to_seller}")
+            await bot.send_message(message.chat.id, "Сообщение отправлено продавцу.")
         except:
-            bot.send_message(message.chat.id, "Ошибка при отправке (возможно, продавец не запустил бота).")
+            await bot.send_message(message.chat.id, "Ошибка при отправке (возможно, продавец не запустил бота).")
 
-    def process_ban_user(message: telebot.types.Message, seller_id: int, complaint_id: int):
+    async def process_ban_user(message: types.Message, seller_id: int, complaint_id: int):
         txt = message.text.strip()
         if "|" not in txt:
-            bot.send_message(message.chat.id, "Неверный формат. Нужно: `Причина | кол-во_дней`.")
-            return
+            return await bot.send_message(message.chat.id, "Неверный формат. Нужно: `Причина | кол-во_дней`.")
         parts = txt.split("|", 1)
         reason = parts[0].strip()
         days_str = parts[1].strip()
         try:
             days_val = int(days_str)
         except:
-            bot.send_message(message.chat.id, "Срок бана (в днях) не число.")
-            return
+            return await bot.send_message(message.chat.id, "Срок бана (в днях) не число.")
 
         with SessionLocal() as session:
             user_seller = session.query(User).filter_by(id=seller_id).first()
             if not user_seller:
-                bot.send_message(message.chat.id, "Продавец не найден.")
-                return
+                return await bot.send_message(message.chat.id, "Продавец не найден.")
 
             user_seller.is_banned = True
             user_seller.ban_reason = reason
@@ -1188,7 +1146,7 @@ def register_admin_handlers(bot: telebot.TeleBot):
 
             session.commit()
 
-        bot.send_message(
+        return await bot.send_message(
             message.chat.id,
             f"Пользователь {seller_id} заблокирован.\nПричина: {reason}.\nСрок: {days_val} дн."
         )
@@ -1196,56 +1154,52 @@ def register_admin_handlers(bot: telebot.TeleBot):
     # ============================
     #    Редактировать профиль пользователя
     # ============================
-    @bot.message_handler(func=lambda m: m.text == "Редактировать профиль пользователя")
-    def edit_profile_user_start(message: telebot.types.Message):
+    @dp.message(func=lambda m: m.text == "Редактировать профиль пользователя")
+    async def edit_profile_user_start(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        msg = bot.send_message(
+        msg = await bot.send_message(
             message.chat.id,
             "Введите ID пользователя, профиль которого хотите изменить:"
         )
-        bot.register_next_step_handler(msg, process_edit_profile_user_id)
+        await bot.register_next_step_handler(msg, process_edit_profile_user_id)
 
-    def process_edit_profile_user_id(message: telebot.types.Message):
+    async def process_edit_profile_user_id(message: types.Message):
         chat_id = message.chat.id
         try:
             uid = int(message.text.strip())
         except:
-            bot.send_message(chat_id, "Некорректный ID.")
-            return
+            return await bot.send_message(chat_id, "Некорректный ID.")
 
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=uid).first()
             if not user:
-                bot.send_message(chat_id, f"Пользователь #{uid} не найден.")
-                return
+                return await bot.send_message(chat_id, f"Пользователь #{uid} не найден.")
 
-        bot.send_message(
+        await bot.send_message(
             chat_id,
             f"Редактирование профиля пользователя #{uid}.\n"
             "Введите одно из: *fio* (ФИО), *inn* (ИНН), *company* (название компании).",
             parse_mode="Markdown"
         )
-        bot.register_next_step_handler(message, lambda msg: process_edit_profile_field(msg, uid))
+        return await bot.register_next_step_handler(message, lambda msg: process_edit_profile_field(msg, uid))
 
-    def process_edit_profile_field(message: telebot.types.Message, user_id: int):
+    async def process_edit_profile_field(message: types.Message, user_id: int):
         chat_id = message.chat.id
         field = message.text.strip().lower()
         if field not in ["fio", "inn", "company"]:
-            bot.send_message(chat_id, "Неизвестное поле. Операция прервана.")
-            return
+            return await bot.send_message(chat_id, "Неизвестное поле. Операция прервана.")
 
-        bot.send_message(chat_id, f"Введите новое значение поля *{field.upper()}*:", parse_mode="Markdown")
-        bot.register_next_step_handler(message, lambda msg: process_edit_profile_value(msg, user_id, field))
+        await bot.send_message(chat_id, f"Введите новое значение поля *{field.upper()}*:", parse_mode="Markdown")
+        return await bot.register_next_step_handler(message, lambda msg: process_edit_profile_value(msg, user_id, field))
 
-    def process_edit_profile_value(message: telebot.types.Message, user_id: int, field: str):
+    async def process_edit_profile_value(message: types.Message, user_id: int, field: str):
         chat_id = message.chat.id
         new_val = message.text.strip()
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=user_id).first()
             if not user:
-                bot.send_message(chat_id, f"Пользователь #{user_id} не найден при обновлении.")
-                return
+                return await bot.send_message(chat_id, f"Пользователь #{user_id} не найден при обновлении.")
 
             if field == "fio":
                 user.full_name = new_val
@@ -1254,56 +1208,53 @@ def register_admin_handlers(bot: telebot.TeleBot):
             elif field == "company":
                 user.company_name = new_val
             else:
-                bot.send_message(chat_id, "Неизвестное поле. Прервано.")
-                return
+                return await bot.send_message(chat_id, "Неизвестное поле. Прервано.")
 
             session.commit()
 
-        bot.send_message(chat_id, f"Поле {field.upper()} пользователя #{user_id} обновлено на: {new_val}")
+        return await bot.send_message(chat_id, f"Поле {field.upper()} пользователя #{user_id} обновлено на: {new_val}")
 
-        @bot.callback_query_handler(func=lambda call:
-        call.data.startswith("approve_ext_") or call.data.startswith("reject_ext_")
-                                    )
-        def handle_extension_request(call: telebot.types.CallbackQuery):
-            """
-            Админ одобряет или отклоняет просьбу о продлении.
-            """
-            admin_id = call.from_user.id
-            if not is_admin(admin_id):
-                return bot.answer_callback_query(call.id, "Нет прав.", show_alert=True)
+    @dp.callback_query(func=lambda call:
+    call.data.startswith("approve_ext_") or call.data.startswith("reject_ext_")             )
+    async def handle_extension_request(call: types.CallbackQuery):
+        """
+        Админ одобряет или отклоняет просьбу о продлении.
+        """
+        admin_id = call.from_user.id
+        if not is_admin(admin_id):
+            return await bot.answer_callback_query(call.id, "Нет прав.", show_alert=True)
 
-            data, ad_id_str = call.data.split("_", 1)[0:2], call.data.split("_", 2)[2]
-            ad_id = int(ad_id_str)
+        data, ad_id_str = call.data.split("_", 1)[0:2], call.data.split("_", 2)[2]
+        ad_id = int(ad_id_str)
 
-            with SessionLocal() as sess:
-                ad = sess.query(Ad).get(ad_id)
-                if not ad:
-                    bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
-                    return
+        with SessionLocal() as sess:
+            ad = sess.query(Ad).get(ad_id)
+            if not ad:
+                return await bot.answer_callback_query(call.id, "Объявление не найдено.", show_alert=True)
 
-                if call.data.startswith("approve_ext_"):
-                    # сдвигаем created_at на сейчас
-                    ad.created_at = datetime.utcnow()
-                    sess.commit()
+            if call.data.startswith("approve_ext_"):
+                # сдвигаем created_at на сейчас
+                ad.created_at = datetime.utcnow()
+                sess.commit()
 
-                    # уведомляем
-                    bot.edit_message_reply_markup(
-                        call.message.chat.id, call.message.message_id, reply_markup=None
-                    )
-                    bot.send_message(admin_id, f"✅ Продление объявления #{ad_id} одобрено.")
-                    bot.send_message(
-                        ad.user_id,
-                        f"Ваше объявление #{ad_id} продлено на 30 дней!"
-                    )
-                else:
-                    # отклоняем
-                    bot.edit_message_reply_markup(
-                        call.message.chat.id, call.message.message_id, reply_markup=None
-                    )
-                    bot.send_message(admin_id, f"❌ Продление объявления #{ad_id} отклонено.")
-                    bot.send_message(
-                        ad.user_id,
-                        f"К сожалению, продление объявления #{ad_id} отклонено администратором."
-                    )
+                # уведомляем
+                await bot.edit_message_reply_markup(
+                    call.message.chat.id, call.message.message_id, reply_markup=None
+                )
+                await bot.send_message(admin_id, f"✅ Продление объявления #{ad_id} одобрено.")
+                await bot.send_message(
+                    ad.user_id,
+                    f"Ваше объявление #{ad_id} продлено на 30 дней!"
+                )
+            else:
+                # отклоняем
+                await bot.edit_message_reply_markup(
+                    call.message.chat.id, call.message.message_id, reply_markup=None
+                )
+                await bot.send_message(admin_id, f"❌ Продление объявления #{ad_id} отклонено.")
+                await bot.send_message(
+                    ad.user_id,
+                    f"К сожалению, продление объявления #{ad_id} отклонено администратором."
+                )
 
-            bot.answer_callback_query(call.id)
+        return await bot.answer_callback_query(call.id)

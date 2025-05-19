@@ -4,7 +4,8 @@ import os
 # ============================================================================
 # 1) Токен бота
 # ============================================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7717741740:AAG4ZTVtnL08Mp9Ev9s4ooeodwd9GYAZpgc")
+# BOT_TOKEN = os.getenv("BOT_TOKEN", "7717741740:AAG4ZTVtnL08Mp9Ev9s4ooeodwd9GYAZpgc")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8110398918:AAFqgYOOLSYNyi8W3epKEqNnym4zTmLKltQ")
 
 # ============================================================================
 # 2) Настройки подключения к базе данных
