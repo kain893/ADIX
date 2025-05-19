@@ -167,20 +167,17 @@ async def guard_group_messages(message: types.Message):
         # 3) Отправляем новое предупреждение
         # Кнопка «↩️ Перейти в бота»
         bot_username = (await bot.get_me()).username
-        inline_kb = types.InlineKeyboardMarkup()
-        inline_kb.add(
+        inline_kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(
                 text="↩️ Перейти в бота / Принять соглашение",
                 url=f"https://t.me/{bot_username}?start=1"
             )
-        )
-
+        ]])
         warn_text = (
             "В этом чате нельзя писать, пока вы не примете пользовательское соглашение.\n"
             "Нажав на кнопку «/start» в боте, вы автоматически соглашаетесь с условиями.\n\n"
             "Перейдите в бота и нажмите /start."
         )
-
         warn_msg = await bot.send_message(
             message.chat.id,
             warn_text,
@@ -236,11 +233,10 @@ async def handle_buy_ad(call: types.CallbackQuery):
         )
 
     # Если это ЛС, уточняем
-    kb = types.InlineKeyboardMarkup()
-    kb.add(
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
         types.InlineKeyboardButton(text="Подтвердить покупку", callback_data=f"confirm_buy_ad_{ad_id}"),
         types.InlineKeyboardButton(text="Отмена", callback_data=f"cancel_buy_ad_{ad_id}")
-    )
+    ]])
     await bot.answer_callback_query(call.id)
     return await bot.send_message(
         call.from_user.id,
@@ -288,11 +284,10 @@ async def handle_confirm_buy_ad(call: types.CallbackQuery):
         result = reserve_funds_for_sale(bot, buyer_id, seller_id, ad_obj)
         if result == "ok":
             # Сделка -> pending
-            kb_buyer = types.InlineKeyboardMarkup()
-            kb_buyer.add(
+            kb_buyer = types.InlineKeyboardMarkup(inline_keyboard=[[
                 types.InlineKeyboardButton(text="Принять сделку", callback_data=f"confirm_deal_{ad_obj.id}"),
                 types.InlineKeyboardButton(text="Отклонить сделку", callback_data=f"cancel_deal_{ad_obj.id}")
-            )
+            ]])
             await bot.answer_callback_query(call.id, "Средства зарезервированы! Ожидается завершение сделки.")
             await bot.send_message(
                 buyer_id,
@@ -412,12 +407,20 @@ async def handle_details_ad(call: types.CallbackQuery):
             "Выберите действие:"
         )
 
-        kb = types.InlineKeyboardMarkup()
-        buy_btn_text = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
-        kb.add(types.InlineKeyboardButton(text=buy_btn_text, callback_data=f"buy_ad_{ad_obj.id}"))
-        kb.add(types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
-        kb.add(types.InlineKeyboardButton(text="Отзывы о продавце", callback_data=f"viewfeedback_seller_{ad_obj.user_id}"))
-
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить",
+                    callback_data=f"buy_ad_{ad_obj.id}"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}")
+            ],
+            [
+                types.InlineKeyboardButton(text="Отзывы о продавце", callback_data=f"viewfeedback_seller_{ad_obj.user_id}")
+            ]
+        ])
     await bot.answer_callback_query(call.id)
     return await bot.send_message(call.message.chat.id, caption, reply_markup=kb)
 
@@ -478,24 +481,26 @@ async def guard_group_messages(message: types.Message):
 
     # 3) формируем новое предупреждение
     bot_username = (await bot.get_me()).username
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        types.InlineKeyboardButton(
-            text="↩️ Перейти в бота / Принять соглашение",
-            url=f"https://t.me/{bot_username}?start=1"
-        )
-    )
-    kb.add(
-        types.InlineKeyboardButton(
-            text="📄 Польз. соглашение ADIX",
-            url="https://telegra.ph/Polzovatelskoe-soglashenie-03-25-9"
-        ),
-        types.InlineKeyboardButton(
-            text="💬 Соглашение Чатов ADIX",
-            url="https://telegra.ph/Obshchie-polozheniya-03-25"
-        )
-    )
-
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(
+                text="↩️ Перейти в бота / Принять соглашение",
+                url=f"https://t.me/{bot_username}?start=1"
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="📄 Польз. соглашение ADIX",
+                url="https://telegra.ph/Polzovatelskoe-soglashenie-03-25-9"
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="💬 Соглашение Чатов ADIX",
+                url="https://telegra.ph/Obshchie-polozheniya-03-25"
+            )
+        ]
+    ])
     warn_text = (
         "В этом чате нельзя писать, пока вы не примете пользовательское соглашение.\n"
         "Нажав на кнопку «/start» в боте, вы автоматически соглашаетесь с условиями.\n\n"

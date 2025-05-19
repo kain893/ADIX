@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from aiogram import Bot, Dispatcher, types
 from database import SessionLocal, Ad, User, AdChat, Sale, AdComplaint
-from config import MAIN_CATEGORIES, CITY_STRUCTURE
+from config import MAIN_CATEGORIES, CITY_STRUCTURE, ADMIN_COMPLAINT_CHAT_ID
 from utils import main_menu_keyboard
 
 def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
@@ -41,15 +41,16 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         region_names = list(CITY_STRUCTURE.keys())
         user_steps[chat_id]["region_list"] = region_names
 
-        kb = types.InlineKeyboardMarkup()
-        for i, reg_name in enumerate(region_names):
-            cb_data = f"srch_region_{i}"
-            kb.add(types.InlineKeyboardButton(text=reg_name, callback_data=cb_data))
-        kb.add(types.InlineKeyboardButton(text="Добавить свой город", callback_data="srch_city_custom"))
-        kb.add(types.InlineKeyboardButton(text="Пропустить город", callback_data="srch_city_skip"))
-        kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel"))
-
         txt = "1) Выберите регион или «Добавить свой город», либо «Пропустить»:"
+
+        buttons = [
+            [ types.InlineKeyboardButton(text=reg_name, callback_data=f"srch_region_{i}") ]
+            for i, reg_name in enumerate(region_names)
+        ]
+        buttons.append([ types.InlineKeyboardButton(text="Добавить свой город", callback_data="srch_city_custom") ])
+        buttons.append([ types.InlineKeyboardButton(text="Пропустить город", callback_data="srch_city_skip") ])
+        buttons.append([ types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel") ])
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
         await bot.send_message(chat_id, txt, reply_markup=kb)
 
     @dp.callback_query(lambda call: call.data.startswith("srch_region_") or
@@ -126,16 +127,15 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         city_list = CITY_STRUCTURE.get(region_name, [])
         st["city_list"] = city_list
 
-        kb = types.InlineKeyboardMarkup()
-        # «По всему региону»
-        kb.add(types.InlineKeyboardButton(text=f"По всему региону «{region_name}»", callback_data="srch_wide_region"))
-
-        for i, c_name in enumerate(city_list):
-            cb = f"srch_city_{i}"
-            kb.add(types.InlineKeyboardButton(text=c_name, callback_data=cb))
-        kb.add(types.InlineKeyboardButton(text="Назад к регионам", callback_data="srch_back_regions"))
-
         txt = f"Регион: {region_name}\nВыберите конкретный округ или «По всему региону»:"
+        buttons = [[
+            # «По всему региону»
+            types.InlineKeyboardButton(text=f"По всему региону «{region_name}»", callback_data="srch_wide_region")
+        ]]
+        for i, c_name in enumerate(city_list):
+            buttons.append([ types.InlineKeyboardButton(text=c_name, callback_data=f"srch_city_{i}") ])
+        buttons.append([ types.InlineKeyboardButton(text="Назад к регионам", callback_data="srch_back_regions") ])
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
         await bot.send_message(chat_id, txt, reply_markup=kb)
 
     @dp.callback_query(lambda call:
@@ -345,16 +345,16 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         st["last_list_msg_id"] = sent.message_id
 
     def build_results_kb(chat_id, ads_slice):
+        buttons = [
+            [ types.InlineKeyboardButton(
+                text=ad_obj.inline_button_text or (ad_obj.text[:15] + "..."),
+                callback_data=f"srch_openad_{ad_obj.id}"
+            ) ] for ad_obj in ads_slice
+        ]
         st = user_steps[chat_id]
-        kb = types.InlineKeyboardMarkup()
-        for ad_obj in ads_slice:
-            # Текст кнопки
-            label = ad_obj.inline_button_text or (ad_obj.text[:15] + "...")
-            cb_data = f"srch_openad_{ad_obj.id}"
-            kb.add(types.InlineKeyboardButton(text=label, callback_data=cb_data))
         if st["shown_count"] < len(st["search_results"]):
-            kb.add(types.InlineKeyboardButton(text="Показать ещё", callback_data="srch_show_more"))
-        return kb
+            buttons.append([ types.InlineKeyboardButton(text="Показать ещё", callback_data="srch_show_more") ])
+        return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @dp.callback_query(lambda call: call.data == "srch_show_more")
     async def handle_show_more(call: types.CallbackQuery):
@@ -427,20 +427,22 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "Нажмите «Купить», чтобы оформить сделку через бота."
         )
 
-        kb = types.InlineKeyboardMarkup(row_width=2)
         buy_lbl = f"Купить «{ad_obj.inline_button_text}»" if ad_obj.inline_button_text else "Купить"
-        kb.add(
-            types.InlineKeyboardButton(text=buy_lbl, callback_data=f"buy_ad_{ad_obj.id}"),
-            types.InlineKeyboardButton(text="Подробнее", callback_data=f"details_ad_{ad_obj.id}")
-        )
-        kb.add(types.InlineKeyboardButton(text="Написать продавцу", callback_data=f"write_seller_ad_{ad_obj.id}"))
-
+        buttons = [
+            [
+                types.InlineKeyboardButton(text=buy_lbl, callback_data=f"buy_ad_{ad_obj.id}"),
+                types.InlineKeyboardButton(text="Подробнее", callback_data=f"details_ad_{ad_obj.id}")
+            ],
+            [
+                types.InlineKeyboardButton(text="Написать продавцу", callback_data=f"write_seller_ad_{ad_obj.id}")
+            ]
+        ]
         if sale_done:
-            kb.add(types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}"))
+            buttons.append([ types.InlineKeyboardButton(text="Оставить отзыв", callback_data=f"feedback_ad_{ad_obj.id}") ])
         else:
-            kb.add(types.InlineKeyboardButton(text="Пожаловаться", callback_data=f"complain_ad_{ad_obj.id}"))
-
-        kb.add(types.InlineKeyboardButton(text="Отзывы о продавце", callback_data=f"viewfeedback_seller_{user_obj.id}"))
+            buttons.append([ types.InlineKeyboardButton(text="Пожаловаться", callback_data=f"complain_ad_{ad_obj.id}") ])
+        buttons.append([ types.InlineKeyboardButton(text="Отзывы о продавце", callback_data=f"viewfeedback_seller_{user_obj.id}") ])
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
         # --- выводим фото или текст ---------------------------
         photos = [p for p in (ad_obj.photos or "").split(",") if p]
@@ -516,15 +518,11 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             c_id = complaint.id
 
             # Уведомляем админов
-            # Соберите нужный ID группы или список админов
-            ADMIN_COMPLAINT_CHAT_ID = -1002288960086  # или ваш ID группы
-            kb_admin = types.InlineKeyboardMarkup()
-            kb_admin.add(
+            kb_admin = types.InlineKeyboardMarkup(inline_keyboard=[[
                 types.InlineKeyboardButton(text="Написать продавцу", callback_data=f"complaint_msg_seller_{c_id}"),
                 types.InlineKeyboardButton(text="Удалить объявление", callback_data=f"complaint_del_ad_{c_id}"),
                 types.InlineKeyboardButton(text="Заблокировать пользователя", callback_data=f"complaint_ban_{c_id}")
-            )
-
+            ]])
             await bot.send_message(
                 ADMIN_COMPLAINT_CHAT_ID,
                 f"Поступила жалоба #{c_id} на объявление #{ad_id}.\n"
@@ -593,11 +591,10 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             chat_id_db = chat.id  # <‑‑ сохраняем до выхода из with‑блока
 
         # ---------- UI -------------
-        kb_open = types.InlineKeyboardMarkup(row_width=1)
-        kb_open.add(
-            types.InlineKeyboardButton(text="💬 Открыть чат", callback_data=f"open_chat_{chat_id_db}"),
-            types.InlineKeyboardButton(text="✏️ Ответить", callback_data=f"chat_write_{chat_id_db}")
-        )
+        kb_open = types.InlineKeyboardMarkup(inline_keyboard=[
+            [ types.InlineKeyboardButton(text="💬 Открыть чат", callback_data=f"open_chat_{chat_id_db}") ],
+            [ types.InlineKeyboardButton(text="✏️ Ответить", callback_data=f"chat_write_{chat_id_db}") ]
+        ])
 
         # покупателю
         await bot.send_message(

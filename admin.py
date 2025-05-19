@@ -7,30 +7,43 @@ from functools import partial
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
-from config import ADMIN_IDS, MARKETING_GROUP_ID
+from config import ADMIN_IDS, MARKETING_GROUP_ID, MARKIROVKA_GROUP_ID
 from database import SessionLocal, User, Ad, ChatGroup, AdFeedback, Sale, TopUp, Withdrawal
 from database import SupportTicket, SupportMessage, AdComplaint
 from utils import post_ad_to_chat, rus_status
 
-MARKIROVKA_GROUP_ID = -1002288960086 # пример чата для маркировки
-
-
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
-
 
 def register_admin_handlers(bot: Bot, dp: Dispatcher):
     @dp.message(Command("admin"))
     async def admin_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return await bot.send_message(message.chat.id, "Нет прав для доступа к админ-меню.")
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.row("Управление балансом", "Последние заказы")
-        kb.row("Рассылка", "Забанить/Разбанить")
-        kb.row("Редактировать объявления", "Удалить объявление")  # <-- добавили здесь
-        kb.row("Управление чатами", "Управление поддержкой")
-        kb.row("Редактировать профиль пользователя")
-        kb.row("Главное меню")
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+            [
+                types.KeyboardButton(text="Управление балансом"),
+                types.KeyboardButton(text="Последние заказы")
+            ],
+            [
+                types.KeyboardButton(text="Рассылка"),
+                types.KeyboardButton(text="Забанить/Разбанить")
+            ],
+            [
+                types.KeyboardButton(text="Редактировать объявления"),
+                types.KeyboardButton(text="Удалить объявление")  # <-- добавили здесь
+            ],
+            [
+                types.KeyboardButton(text="Управление чатами"),
+                types.KeyboardButton(text="Управление поддержкой")
+            ],
+            [
+                types.KeyboardButton(text="Редактировать профиль пользователя")
+            ],
+            [
+                types.KeyboardButton(text="Главное меню")
+            ]
+        ])
         return await bot.send_message(message.chat.id, "Админ-меню:", reply_markup=kb)
 
     # ------------------------------------------------------------------------
@@ -246,10 +259,19 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     async def admin_manage_chats(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.row("Добавить чат", "Список чатов", "Удалить чат")
-        kb.row("Загрузить чаты (Excel/CSV)")
-        kb.row("Главное меню")
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+            [
+                types.KeyboardButton(text="Добавить чат"),
+                types.KeyboardButton(text="Список чатов"),
+                types.KeyboardButton(text="Удалить чат")
+            ],
+            [
+                types.KeyboardButton(text="Загрузить чаты (Excel/CSV)")
+            ],
+            [
+                types.KeyboardButton(text="Главное меню")
+            ]
+        ])
         await bot.send_message(message.chat.id, "Управление чатами:", reply_markup=kb)
 
     @dp.message(lambda m: m.text == "Добавить чат")
@@ -904,8 +926,12 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     async def admin_support_menu(message: types.Message):
         if not is_admin(message.chat.id):
             return
-        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.row("Список открытых тикетов", "Главное меню")
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+            [
+                types.KeyboardButton(text="Список открытых тикетов"),
+                types.KeyboardButton(text="Главное меню")
+            ]
+        ])
         await bot.send_message(message.chat.id, "Управление тикетами поддержки:", reply_markup=kb)
 
     @dp.message(lambda m: m.text == "Список открытых тикетов")
@@ -947,10 +973,10 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                 for m in ticket.messages
             ) or "Сообщений пока нет."
 
-        kb = types.InlineKeyboardMarkup(row_width=1)
-        kb.add(types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"admin_support_reply_{t_id}"),
-               types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"admin_support_close_{t_id}"))
-
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [ types.InlineKeyboardButton(text="✉ Ответить", callback_data=f"admin_support_reply_{t_id}") ],
+            [ types.InlineKeyboardButton(text="🛑 Закрыть тикет", callback_data=f"admin_support_close_{t_id}") ]
+        ])
         await bot.edit_message_text(
             f"Тикет #{t_id}\nСтатус: {rus_status(ticket.status)}\n\n{text_history}",
             chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=kb

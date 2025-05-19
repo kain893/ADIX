@@ -8,11 +8,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import CallbackQuery
 
+from config import ADMIN_SUPPORT_CHAT_ID
 from database import SessionLocal, SupportTicket, SupportMessage
 from utils import main_menu_keyboard, rus_status
-
-# ADMIN_SUPPORT_CHAT_ID = -1002288960086
-ADMIN_SUPPORT_CHAT_ID = -1002623967252
 
 class SupportStates(StatesGroup):
     waiting_for_problem_description = State()
