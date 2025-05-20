@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import asyncio
+import dataclasses
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Dict
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.client.default import DefaultBotProperties
@@ -28,12 +30,18 @@ bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties())
 dp = Dispatcher()
 init_db()
 
+@dataclasses.dataclass
+class WarnMessage:
+    chat_id: int
+    message_id: int
+    timer: threading.Timer
+
 # Хранилище для состояния (шагов) пользователей
 user_steps = {}
 
 # Храним информацию о предупреждениях в группах:
 #  warn_messages[user_id] = (chat_id, warn_message_id, timer_object)
-warn_messages = {}
+warn_messages: Dict[int, WarnMessage] = {}
 
 # Регистрируем все хендлеры из соответствующих модулей
 register_admin_handlers(bot, dp)
@@ -202,7 +210,7 @@ async def guard_group_messages(message: types.Message):
         t.start()
 
         # 5) Запоминаем, чтобы при повторной попытке удалить и заменить
-        warn_messages[message.from_user.id] = (message.chat.id, warn_msg.message_id, t)
+        warn_messages[message.from_user.id] = WarnMessage(message.chat.id, warn_msg.message_id, t)
 
     else:
         # Пользователь зарегистрирован, разрешаем писать
@@ -533,7 +541,7 @@ async def guard_group_messages(message: types.Message):
     timer.start()
 
     # 5) сохраняем, чтобы потом корректно удалить/обновить
-    warn_messages[user_id] = (message.chat.id, warn_msg.message_id, timer)
+    warn_messages[user_id] = WarnMessage(message.chat.id, warn_msg.message_id, timer)
 
 async def main() -> None:
     # skip_pending=True, чтобы «очищать» старые «висящие» апдейты

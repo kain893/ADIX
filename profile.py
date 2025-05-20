@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+import dataclasses
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List
+from typing import List, Dict
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
@@ -25,8 +26,14 @@ class FinanceStates(StatesGroup):
     waiting_for_withdrawal_sum = State()
     waiting_for_withdrawal_acc = State()
 
+@dataclasses.dataclass
+class ProfileChange:
+    user_id: int
+    field: str
+    value: str
+
 # заявки, ожидающие одобрения админом
-pending_profile_changes = {}         # change_id -> {"user_id": …, "field": …, "value": …}
+pending_profile_changes: Dict[int, ProfileChange] = {}
 def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # ------------------- Главное меню / Личный кабинет -------------------
     @dp.message(lambda m: m.text == "📜Личный кабинет")
@@ -779,7 +786,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         # создаём уникальный ID заявки
         change_id = int(datetime.now(timezone.utc).timestamp() * 1000)
-        pending_profile_changes[change_id] = {"user_id": uid, "field": field, "value": value}
+        pending_profile_changes[change_id] = ProfileChange(user_id=uid, field=field, value=value)
 
         nice_name = {"fio": "ФИО", "inn": "ИНН", "company": "компания"}[field]
 
@@ -811,9 +818,9 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         if not data:
             return await bot.answer_callback_query(call.id, "Заявка не найдена / уже обработана.", show_alert=True)
 
-        user_id = data["user_id"]
-        field = data["field"]
-        value = data["value"]
+        user_id = data.user_id
+        field = data.field
+        value = data.value
         nice = {"fio": "ФИО", "inn": "ИНН", "company": "компания"}[field]
 
         if approve:
