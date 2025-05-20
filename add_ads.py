@@ -1,15 +1,29 @@
 #!/usr/bin/env python3
+from decimal import Decimal
 from typing import List
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.exceptions import TelegramRetryAfter, TelegramNetworkError
-from decimal import Decimal
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 from config import MAIN_CATEGORIES, MODERATION_GROUP_ID, CITY_STRUCTURE, MARKIROVKA_GROUP_ID
 from database import SessionLocal, User, Ad, ChatGroup
 from utils import calc_chat_price, main_menu_keyboard, rus_status
 
 
+class AdsStates(StatesGroup):
+    f1_button_name = State()
+    f1_text = State()
+    f1_photos = State()
+    f1_custom_city = State()
+    f1_price = State()
+    f1_quantity = State()
+    f2_title = State()
+    f2_description = State()
+    f2_photos = State()
+    f2_fio = State()
+    f2_inn = State()
 
 def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     """
@@ -57,7 +71,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     @dp.callback_query(lambda call: call.data in [
         "create_ad_start", "my_ads_list", "cancel_ad_creation", "adix_market_start"
     ])
-    async def handle_main_menu_callback(call: types.CallbackQuery):
+    async def handle_main_menu_callback(call: types.CallbackQuery, state: FSMContext):
         """
         Обработка выбора в инлайн-меню "Создать объявление / Разместить на бирже / ..."
         """
@@ -65,6 +79,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         user_id = call.from_user.id
 
         if call.data == "cancel_ad_creation":
+            await state.clear()
             await bot.delete_message(chat_id, call.message.message_id)
             await bot.send_message(chat_id, "Создание объявления отменено.", reply_markup=main_menu_keyboard())
             user_steps.pop(chat_id, None)
@@ -106,7 +121,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 "subcat_list": [],
                 "subcategory": None
             }
-            return await ask_for_inline_button_name(chat_id)
+            return await ask_for_inline_button_name(chat_id, state)
 
         if call.data == "adix_market_start":
             # И здесь проверяем
@@ -143,7 +158,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 "ad_id": None,
                 "payment_confirmed": False
             }
-            return await start_format2_flow(chat_id)
+            return await start_format2_flow(chat_id, state)
         else:
             return None
 
@@ -215,7 +230,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # ---------------------------------------------------------------------------
     #                         ФОРМАТ №1 (обычное объявление)
     # ---------------------------------------------------------------------------
-    async def ask_for_inline_button_name(chat_id):
+    async def ask_for_inline_button_name(chat_id, state: FSMContext):
         text_ask = (
             "1. Введите название для кнопки (до 3 слов). Например: «Стул».\n"
             "*Согласно пользовательскому соглашению ADIX.*"
@@ -223,10 +238,12 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f1_button_name.state:
+            await state.set_state(AdsStates.f1_button_name)
         await bot.send_message(chat_id, text_ask, parse_mode="Markdown", reply_markup=kb)
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_inline_button_name)
 
-    async def process_inline_button_name(message: types.Message):
+    @dp.message(AdsStates.f1_button_name)
+    async def process_inline_button_name(message: types.Message, state: FSMContext):
         """
         Шаг 1: Название кнопки.
         """
@@ -235,11 +252,11 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             return None
         name_text = message.text.strip()
         if len(name_text.split()) > 3:
-            return await ask_for_inline_button_name(chat_id)
+            return await ask_for_inline_button_name(chat_id, state)
         user_steps[chat_id]["inline_button_text"] = name_text
-        return await ask_for_ad_text(chat_id)
+        return await ask_for_ad_text(chat_id, state)
 
-    async def ask_for_ad_text(chat_id):
+    async def ask_for_ad_text(chat_id, state: FSMContext):
         """
         Шаг 2: Текст объявления.
         """
@@ -250,20 +267,21 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        await state.set_state(AdsStates.f1_text)
         await bot.send_message(chat_id, txt, parse_mode="Markdown", reply_markup=kb)
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_ad_text)
 
-    async def process_ad_text(message: types.Message):
+    @dp.message(AdsStates.f1_text)
+    async def process_ad_text(message: types.Message, state: FSMContext):
         """
         Обрабатываем текст объявления.
         """
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return
+            return await state.clear()
         user_steps[chat_id]["text"] = message.text.strip()
-        await ask_for_photos(chat_id)
+        return await ask_for_photos(chat_id, state)
 
-    async def ask_for_photos(chat_id):
+    async def ask_for_photos(chat_id, state: FSMContext):
         """
         Шаг 3: Фото (до 10 шт).
         """
@@ -273,28 +291,27 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             types.InlineKeyboardButton(text="Пропустить", callback_data="photo_skip"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        await state.set_state(AdsStates.f1_photos)
         await bot.send_message(chat_id, txt, reply_markup=kb)
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_photos)
 
-    async def process_photos(message: types.Message):
+    @dp.message(AdsStates.f1_photos)
+    async def process_photos(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return
+            return await state.clear()
         if message.content_type == "photo":
             file_id = message.photo[-1].file_id
             user_steps[chat_id]["photos"].append(file_id)
-            await bot.register_next_step_handler_by_chat_id(chat_id, process_photos)
-        else:
-            await bot.register_next_step_handler_by_chat_id(chat_id, process_photos)
+        return None
 
     @dp.callback_query(lambda call: call.data in ("photo_done", "photo_skip"))
-    async def handle_photos_done_skip(call: types.CallbackQuery):
+    async def handle_photos_done_skip(call: types.CallbackQuery, state: FSMContext):
         """
         Нажата кнопка "Готово" или "Пропустить" при загрузке фото.
         """
         chat_id = call.message.chat.id
+        await state.clear()
         await bot.delete_message(chat_id, call.message.message_id)
-        await bot.clear_step_handler_by_chat_id(chat_id)
         if chat_id not in user_steps:
             return
 
@@ -406,17 +423,19 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         await bot.answer_callback_query(call.id)
 
     @dp.callback_query(lambda call: call.data == "city_custom")
-    async def handle_city_custom(call: types.CallbackQuery):
+    async def handle_city_custom(call: types.CallbackQuery, state: FSMContext):
         """
         Ввод собственного названия города (Формат №1).
         """
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
         await bot.answer_callback_query(call.id)
+        await state.set_state(AdsStates.f1_custom_city)
         await bot.send_message(chat_id, "Введите название своего города:")
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_custom_city)
 
-    async def process_custom_city(message: types.Message):
+    @dp.message(AdsStates.f1_custom_city)
+    async def process_custom_city(message: types.Message, state: FSMContext):
+        await state.clear()
         chat_id = message.chat.id
         if chat_id not in user_steps:
             return
@@ -463,7 +482,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         await bot.send_message(chat_id, "5. Выберите категорию:", reply_markup=kb)
 
     @dp.callback_query(lambda call: call.data.startswith("select_category_"))
-    async def handle_category_selection(call: types.CallbackQuery):
+    async def handle_category_selection(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         category = call.data.replace("select_category_", "")
         if chat_id not in user_steps:
@@ -488,7 +507,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         sub_list = user_steps[chat_id]["subcat_list"]
         if not sub_list:
             user_steps[chat_id]["subcategory"] = None
-            return await ask_for_price(chat_id)
+            return await ask_for_price(chat_id, state)
 
         buttons = [
             [ types.InlineKeyboardButton(text=s, callback_data=f"subcat_{i}") ]
@@ -500,7 +519,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await bot.send_message(chat_id, f"Подкатегория для {category}:", reply_markup=kb)
 
     @dp.callback_query(lambda call: call.data.startswith("subcat_") or call.data == "skip_subcategory")
-    async def handle_subcat(call: types.CallbackQuery):
+    async def handle_subcat(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         if chat_id not in user_steps:
             return
@@ -518,9 +537,9 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         await bot.delete_message(chat_id, call.message.message_id)
         await bot.answer_callback_query(call.id)
-        await ask_for_price(chat_id)
+        await ask_for_price(chat_id, state)
 
-    async def ask_for_price(chat_id):
+    async def ask_for_price(chat_id, state: FSMContext):
         """
         Шаг 6 (Формат №1): цена.
         """
@@ -528,34 +547,35 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             types.InlineKeyboardButton(text="Пропустить", callback_data="price_skip"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f1_price.state:
+            await state.set_state(AdsStates.f1_price)
         await bot.send_message(chat_id, "6. Введите цену (число) или «Пропустить».", reply_markup=kb)
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_ad_price)
 
     @dp.callback_query(lambda call: call.data == "price_skip")
-    async def skip_price(call: types.CallbackQuery):
+    async def skip_price(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
         if chat_id in user_steps:
             user_steps[chat_id]["price"] = 0
         await bot.answer_callback_query(call.id, "Цена пропущена.")
-        await ask_for_quantity(chat_id)
+        await ask_for_quantity(chat_id, state)
 
-    async def process_ad_price(message: types.Message):
+    @dp.message(AdsStates.f1_price)
+    async def process_ad_price(message: types.Message, state: FSMContext):
         """
         Обработка введённой цены (Формат №1).
         """
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return
+            return await state.clear()
         try:
             val = float(message.text.strip())
         except:
-            await ask_for_price(chat_id)
-            return
+            return await ask_for_price(chat_id, state)
         user_steps[chat_id]["price"] = val
-        await ask_for_quantity(chat_id)
+        return await ask_for_quantity(chat_id, state)
 
-    async def ask_for_quantity(chat_id):
+    async def ask_for_quantity(chat_id, state: FSMContext):
         """
         Шаг 7 (Формат №1): количество (если нужно).
         """
@@ -563,14 +583,16 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             types.InlineKeyboardButton(text="Пропустить", callback_data="quantity_skip"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f1_quantity.state:
+            await state.set_state(AdsStates.f1_quantity)
         await bot.send_message(chat_id, "7. Введите количество (число) или «Пропустить».", reply_markup=kb)
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_ad_quantity)
 
     @dp.callback_query(lambda call: call.data == "quantity_skip")
-    async def skip_quantity(call: types.CallbackQuery):
+    async def skip_quantity(call: types.CallbackQuery, state: FSMContext):
         """
         Пользователь пропустил ввод количества (Формат №1).
         """
+        await state.clear()
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
         if chat_id in user_steps:
@@ -578,18 +600,20 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         await bot.answer_callback_query(call.id, "Количество пропущено.")
         await finalize_ad_save(chat_id)
 
-    async def process_ad_quantity(message: types.Message):
+    @dp.message(AdsStates.f1_quantity)
+    async def process_ad_quantity(message: types.Message, state: FSMContext):
         """
         Обработчик введённого количества (Формат №1).
         """
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return None
+            return await state.clear()
         try:
             q = int(message.text.strip())
         except:
-            return await ask_for_quantity(chat_id)
+            return await ask_for_quantity(chat_id, state)
         user_steps[chat_id]["quantity"] = q
+        await state.clear()
         return await finalize_ad_save(chat_id)
 
     async def finalize_ad_save(chat_id):
@@ -685,7 +709,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # ========================================================================
 
     @dp.callback_query(lambda call: call.data == "adix_market_start")
-    async def handle_adix_market_start(call: types.CallbackQuery):
+    async def handle_adix_market_start(call: types.CallbackQuery, state: FSMContext):
         """
         Старт потока «Биржа» из главного меню.
         """
@@ -709,15 +733,17 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "post_count": 1,
             "total_sum": 0.0
         }
-        await start_format2_flow(chat_id)
+        await start_format2_flow(chat_id, state)
 
-    async def start_format2_flow(chat_id: int):
+    async def start_format2_flow(chat_id: int, state: FSMContext):
         """
         Шаг 1 — «Формат №2 (Биржа)». Запрашиваем название объявления.
         """
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f2_title.state:
+            await state.set_state(AdsStates.f2_title)
         await bot.send_message(
             chat_id,
             "Формат №2 (Биржа).\n\n"
@@ -725,112 +751,121 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "Например: «Ремонт окон»",
             reply_markup=kb
         )
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_format2_title)
 
     # -----------------------------------------------------------------
     #  ── ЭТА СТРОКА ДЕЛАЕТ ФУНКЦИЮ ДОСТУПНОЙ ИЗ profile.py ──
     globals()["_start_format2_flow_fn"] = start_format2_flow
 
-    async def process_format2_title(message: types.Message):
+    @dp.message(AdsStates.f2_title)
+    async def process_format2_title(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return None
+            return await state.clear()
         title = message.text.strip()
         if len(title.split()) > 3:
-            return await start_format2_flow(chat_id)
+            return await start_format2_flow(chat_id, state)
         user_steps[chat_id]["title"] = title
-        return await ask_format2_description(chat_id)
+        return await ask_format2_description(chat_id, state)
 
-    async def ask_format2_description(chat_id: int):
+    async def ask_format2_description(chat_id: int, state: FSMContext):
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f2_description.state:
+            await state.set_state(AdsStates.f2_description)
         await bot.send_message(
             chat_id,
             "2) Введите описание услуги или товара (обязательно, без пропуска):",
             reply_markup=kb
         )
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_format2_description)
 
-    async def process_format2_description(message: types.Message):
+    @dp.message(AdsStates.f2_description)
+    async def process_format2_description(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
-        if chat_id not in user_steps: return
+        if chat_id not in user_steps:
+            return await state.clear()
         desc = message.text.strip()
         if not desc:
-            return await ask_format2_description(chat_id)
+            return await ask_format2_description(chat_id, state)
         user_steps[chat_id]["description"] = desc
-        return await ask_format2_photos(chat_id)
+        return await ask_format2_photos(chat_id, state)
 
-    async def ask_format2_photos(chat_id: int):
+    async def ask_format2_photos(chat_id: int, state: FSMContext):
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Готово", callback_data="format2_photos_done"),
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        await state.set_state(AdsStates.f2_photos)
         await bot.send_message(
             chat_id,
             "3) Загрузите до 10 фото (по одному). Когда закончите, нажмите «Готово».",
             reply_markup=kb
         )
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_format2_photos)
 
-    async def process_format2_photos(message: types.Message):
+    @dp.message(AdsStates.f2_photos)
+    async def process_format2_photos(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
-        if chat_id not in user_steps: return
+        if chat_id not in user_steps:
+            return await state.clear()
         if message.content_type == "photo":
             photos = user_steps[chat_id]["photos"]
             if len(photos) < 10:
                 photos.append(message.photo[-1].file_id)
             else:
                 await bot.send_message(chat_id, "Максимум 10 фото!")
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_format2_photos)
+        return None
 
     @dp.callback_query(lambda call: call.data == "format2_photos_done")
-    async def done_format2_photos(call: types.CallbackQuery):
+    async def done_format2_photos(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
-        await bot.clear_step_handler_by_chat_id(chat_id)
+        await state.clear()
         await bot.answer_callback_query(call.id)
-        await ask_format2_fio(chat_id)
+        await ask_format2_fio(chat_id, state)
 
-    async def ask_format2_fio(chat_id: int):
+    async def ask_format2_fio(chat_id: int, state: FSMContext):
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f2_fio.state:
+            await state.set_state(AdsStates.f2_fio)
         await bot.send_message(
             chat_id,
             "4) Укажите ФИО (Иванов Иван Иванович):",
             reply_markup=kb
         )
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_format2_fio)
 
-    async def process_format2_fio(message: types.Message):
+    @dp.message(AdsStates.f2_fio)
+    async def process_format2_fio(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return None
+            return await state.clear()
         fio = message.text.strip()
         if not fio:
-            return ask_format2_fio(chat_id)
+            return ask_format2_fio(chat_id, state)
         user_steps[chat_id]["fio"] = fio
-        return await ask_format2_inn(chat_id)
+        return await ask_format2_inn(chat_id, state)
 
-    async def ask_format2_inn(chat_id: int):
+    async def ask_format2_inn(chat_id: int, state: FSMContext):
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
         ]])
+        if await state.get_state() != AdsStates.f2_inn.state:
+            await state.set_state(AdsStates.f2_inn)
         await bot.send_message(
             chat_id,
             "5) Укажите ИНН (12 цифр для ФЛ или 10 для ЮЛ):",
             reply_markup=kb
         )
-        await bot.register_next_step_handler_by_chat_id(chat_id, process_format2_inn)
 
-    async def process_format2_inn(message: types.Message):
+    @dp.message(AdsStates.f2_inn)
+    async def process_format2_inn(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         if chat_id not in user_steps:
-            return None
+            return await state.clear()
         inn = message.text.strip()
         if not (inn.isdigit() and len(inn) in (10, 12)):
-            return await ask_format2_inn(chat_id)
+            return await ask_format2_inn(chat_id, state)
         user_steps[chat_id]["inn"] = inn
 
         # сразу к выбору региона:
@@ -846,6 +881,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 types.InlineKeyboardButton(text="Отмена", callback_data="cancel_ad_creation")
             ]
         ])
+        await state.clear()
         return await bot.send_message(chat_id, "6) Выберите регион размещения:", reply_markup=kb)
 
     # ---------------------------------------------------------------------
@@ -1456,6 +1492,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
 async def start_format2_flow_direct(bot: Bot,
                                     message: types.Message,
+                                    state: FSMContext,
                                     user_steps: dict):
     """
     Запуск «Формата №2» напрямую из личного кабинета
@@ -1505,4 +1542,4 @@ async def start_format2_flow_direct(bot: Bot,
                          reply_markup=main_menu_keyboard())
 
     # --- запускаем поток ------------------------------------------------
-    return await start_fn(chat_id)
+    return await start_fn(chat_id, state)

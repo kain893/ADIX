@@ -2,15 +2,35 @@
 import csv
 import os
 from datetime import datetime, timedelta, timezone
-from functools import partial
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 from config import ADMIN_IDS, MARKETING_GROUP_ID, MARKIROVKA_GROUP_ID
 from database import SessionLocal, User, Ad, ChatGroup, AdFeedback, Sale, TopUp, Withdrawal
 from database import SupportTicket, SupportMessage, AdComplaint
 from utils import post_ad_to_chat, rus_status
+
+
+class AdminStates(StatesGroup):
+    remove_group = State()
+    add_chat = State()
+    edit_ad_v1 = State()
+    edit_ad_v2 = State()
+    deactivate_ad = State()
+    ban_unban_user = State()
+    broadcast = State()
+    balance_user_id = State()
+    balance_value = State()
+    edit_profile_user_id = State()
+    edit_profile_field = State()
+    edit_profile_value = State()
+    reply_support_ticket = State()
+    complaint_write_seller = State()
+    complaint_ban_user = State()
+    waiting_for_chats_file = State()
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -50,13 +70,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            УДАЛИТЬ (ДЕАКТИВИРОВАТЬ) ОБЪЯВЛЕНИЕ
     # ------------------------------------------------------------------------
     @dp.message(lambda m: m.text == "Удалить объявление")
-    async def admin_deactivate_ad(message: types.Message):
+    async def admin_deactivate_ad(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(message.chat.id, "Введите ID объявления для деактивации:")
-        await bot.register_next_step_handler(msg, process_admin_deactivate_ad)
+        await state.set_state(AdminStates.deactivate_ad)
+        await bot.send_message(message.chat.id, "Введите ID объявления для деактивации:")
 
-    async def process_admin_deactivate_ad(message: types.Message):
+    @dp.message(AdminStates.deactivate_ad)
+    async def process_admin_deactivate_ad(message: types.Message, state: FSMContext):
+        await state.clear()
         chat_id = message.chat.id
         try:
             ad_id = int(message.text.strip())
@@ -115,21 +137,28 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            УПРАВЛЕНИЕ БАЛАНСОМ
     # ------------------------------------------------------------------------
     @dp.message(lambda m: m.text == "Управление балансом")
-    async def admin_balance(message: types.Message):
+    async def admin_balance(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(message.chat.id, "Введите *ID пользователя*:", parse_mode="Markdown")
-        await bot.register_next_step_handler(msg, process_admin_balance_user)
+        await state.set_state(AdminStates.balance_user_id)
+        await bot.send_message(message.chat.id, "Введите *ID пользователя*:", parse_mode="Markdown")
 
-    async def process_admin_balance_user(message: types.Message):
+    @dp.message(AdminStates.balance_user_id)
+    async def process_admin_balance_user(message: types.Message, state: FSMContext):
         try:
             tid = int(message.text)
         except:
+            await state.clear()
             return await bot.send_message(message.chat.id, "Некорректный ID.")
-        msg = await bot.send_message(message.chat.id, "Введите сумму (или +100 / -50 и т.п.):")
-        return await bot.register_next_step_handler(msg, process_admin_balance_value, tid)
+        await state.update_data(tid=tid)
+        await state.set_state(AdminStates.balance_value)
+        return await bot.send_message(message.chat.id, "Введите сумму (или +100 / -50 и т.п.):")
 
-    async def process_admin_balance_value(message: types.Message, target_user_id):
+    @dp.message(AdminStates.balance_value)
+    async def process_admin_balance_value(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        await state.clear()
+        target_user_id = data.get("tid")
         val_str = message.text.strip()
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=target_user_id).first()
@@ -173,13 +202,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            РАССЫЛКА
     # ------------------------------------------------------------------------
     @dp.message(lambda m: m.text == "Рассылка")
-    async def admin_broadcast(message: types.Message):
+    async def admin_broadcast(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(message.chat.id, "Текст рассылки:")
-        await bot.register_next_step_handler(msg, process_admin_broadcast_text)
+        await state.set_state(AdminStates.broadcast)
+        await bot.send_message(message.chat.id, "Текст рассылки:")
 
-    async def process_admin_broadcast_text(message: types.Message):
+    @dp.message(AdminStates.broadcast)
+    async def process_admin_broadcast_text(message: types.Message, state: FSMContext):
+        await state.clear()
         txt = message.text.strip()
         with SessionLocal() as session:
             # Рассылку шлём только незаблокированным
@@ -195,13 +226,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            ЗАБАНИТЬ/РАЗБАНИТЬ (из меню)
     # ------------------------------------------------------------------------
     @dp.message(lambda m: m.text == "Забанить/Разбанить")
-    async def admin_ban_unban(message: types.Message):
+    async def admin_ban_unban(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(message.chat.id, "Введите: `user_id ban` или `user_id unban`")
-        await bot.register_next_step_handler(msg, process_admin_ban_unban)
+        await state.set_state(AdminStates.ban_unban_user)
+        await bot.send_message(message.chat.id, "Введите: `user_id ban` или `user_id unban`")
 
-    async def process_admin_ban_unban(message: types.Message):
+    @dp.message(AdminStates.ban_unban_user)
+    async def process_admin_ban_unban(message: types.Message, state: FSMContext):
+        await state.clear()
         parts = message.text.split()
         if len(parts) != 2:
             return await bot.send_message(message.chat.id, "Неверный формат. Нужен: <id> ban|unban")
@@ -229,13 +262,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #            РЕДАКТИРОВАТЬ ОБЪЯВЛЕНИЯ
     # ------------------------------------------------------------------------
     @dp.message(lambda m: m.text == "Редактировать объявления")
-    async def admin_edit_ads(message: types.Message):
+    async def admin_edit_ads(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(message.chat.id, "Введите: ID_объявления|Новый текст.\nНапример: `12|Новый текст`")
-        await bot.register_next_step_handler(msg, process_admin_edit_ad)
+        await state.set_state(AdminStates.edit_ad_v1)
+        await bot.send_message(message.chat.id, "Введите: ID_объявления|Новый текст.\nНапример: `12|Новый текст`")
 
-    async def process_admin_edit_ad(message: types.Message):
+    @dp.message(AdminStates.edit_ad_v1)
+    async def process_admin_edit_ad(message: types.Message, state: FSMContext):
+        await state.clear()
         if "|" not in message.text:
             return await bot.send_message(message.chat.id, "Неверный формат. Нужно указать `|` между ID и текстом.")
         ad_id_str, new_text = message.text.split("|", 1)
@@ -275,16 +310,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         await bot.send_message(message.chat.id, "Управление чатами:", reply_markup=kb)
 
     @dp.message(lambda m: m.text == "Добавить чат")
-    async def admin_add_chat(message: types.Message):
+    async def admin_add_chat(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(
-            message.chat.id,
-            "Введите: chat_id, название, цена\nНапример: `-10012345, МойЧат, 50`"
-        )
-        await bot.register_next_step_handler(msg, process_admin_add_chat)
+        await state.set_state(AdminStates.add_chat)
+        await bot.send_message(message.chat.id, "Введите: chat_id, название, цена\nНапример: `-10012345, МойЧат, 50`")
 
-    async def process_admin_add_chat(message: types.Message):
+    @dp.message(AdminStates.add_chat)
+    async def process_admin_add_chat(message: types.Message, state: FSMContext):
+        await state.clear()
         parts = message.text.split(",")
         if len(parts) != 3:
             return await bot.send_message(message.chat.id, "Неверный формат. Нужно 3 значения: <chat_id>, <название>, <цена>.")
@@ -356,13 +390,18 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         return await bot.send_message(message.chat.id, "Конец списка.")
 
     @dp.message(lambda m: m.text == "Удалить чат")
-    async def admin_delete_chat(message: types.Message):
+    async def admin_delete_chat(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(message.chat.id, "Введите ID чата (из БД):")
-        await bot.register_next_step_handler(msg, process_admin_delete_chat)
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+            types.InlineKeyboardButton(text="Отмена", callback_data="cancel_chat_deletion"),
+        ]])
+        await state.set_state(AdminStates.remove_group)
+        await bot.send_message(message.chat.id, "Введите ID чата (из БД):", reply_markup=kb)
 
-    async def process_admin_delete_chat(message: types.Message):
+    @dp.message(AdminStates.remove_group)
+    async def process_admin_delete_chat(message: types.Message, state: FSMContext):
+        await state.clear()
         try:
             db_id = int(message.text.strip())
         except:
@@ -376,18 +415,20 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         return await bot.send_message(message.chat.id, "Чат удалён.")
 
     @dp.message(lambda m: m.text == "Загрузить чаты (Excel/CSV)")
-    async def admin_add_chats_from_excel_csv(message: types.Message):
+    async def admin_add_chats_from_excel_csv(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(
+        await state.set_state(AdminStates.waiting_for_chats_file)
+        await bot.send_message(
             message.chat.id,
             "Пришлите файл Excel (XLSX) или CSV с данными о чатах.\n\n"
             "Формат XLSX: (chat_id, title, price)\n"
             "Формат CSV: Название, Кол-во участников, Цена1, Цена2, ... (и т.д.)"
         )
-        await bot.register_next_step_handler(msg, wait_for_document_file)
 
-    async def wait_for_document_file(message: types.Message):
+    @dp.message(AdminStates.waiting_for_chats_file)
+    async def wait_for_document_file(message: types.Message, state: FSMContext):
+        await state.clear()
         if not is_admin(message.chat.id):
             return None
 
@@ -665,7 +706,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         call.data.startswith("publish_ad_") or
         call.data.startswith("approve_publish_ad_")
     )
-    async def handle_moderation_callbacks(call: types.CallbackQuery):
+    async def handle_moderation_callbacks(call: types.CallbackQuery, state: FSMContext):
         if not is_admin(call.from_user.id):
             return await bot.answer_callback_query(call.id, "Нет прав для модерации.", show_alert=True)
 
@@ -702,11 +743,12 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                 return await bot.answer_callback_query(call.id, "Объявление отклонено.")
             elif action == "edit_ad":
                 await bot.answer_callback_query(call.id, "Введите новый текст объявления в ответ на это сообщение.")
-                msg = await bot.send_message(
+                await state.set_state(AdminStates.edit_ad_v2)
+                await state.update_data(ad_id=ad_id)
+                return await bot.send_message(
                     call.message.chat.id,
                     f"Редактирование объявления #{ad_id}. Введите новый текст:"
                 )
-                return await bot.register_next_step_handler(msg, lambda m: process_edit_ad_text(m, ad_id))
             elif action == "publish_ad":
                 if ad_obj.status != "approved":
                     return await bot.answer_callback_query(call.id, "Сначала одобрите объявление (approve_ad).", show_alert=True)
@@ -732,7 +774,11 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             else:
                 return None
 
-    async def process_edit_ad_text(message: types.Message, ad_id: int):
+    @dp.message(AdminStates.edit_ad_v2)
+    async def process_edit_ad_text(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        await state.clear()
+        ad_id = data.get("ad_id")
         new_text = message.text.strip()
         with SessionLocal() as session:
             ad_obj = session.query(Ad).filter_by(id=ad_id).first()
@@ -943,10 +989,13 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             if not tickets:
                 return await bot.send_message(message.chat.id, "Нет открытых тикетов.")
 
-            kb = types.InlineKeyboardMarkup(row_width=1)
-            for t in tickets:
-                btn_txt = f"Тикет #{t.id} от пользователя {t.user_id}"
-                kb.add(types.InlineKeyboardButton(text=btn_txt, callback_data=f"admin_support_view_{t.id}"))
+            buttons = [
+                [ types.InlineKeyboardButton(
+                    text=f"Тикет #{t.id} от пользователя {t.user_id}",
+                    callback_data=f"admin_support_view_{t.id}"
+                ) ] for t in tickets
+            ]
+            kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
             return await bot.send_message(message.chat.id, "Открытые тикеты:", reply_markup=kb)
 
     # ------------------------------------------------------------------
@@ -987,7 +1036,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #   ответ администратора
     # ------------------------------------------------------------------
     @dp.callback_query(lambda c: c.data.startswith("admin_support_reply_"))
-    async def admin_support_reply_ticket(call: types.CallbackQuery):
+    async def admin_support_reply_ticket(call: types.CallbackQuery, state: FSMContext):
         if not is_admin(call.from_user.id):
             return await bot.answer_callback_query(call.id)
 
@@ -997,12 +1046,15 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             return await bot.answer_callback_query(call.id, "Некорректный ID тикета.", show_alert=True)
 
         await bot.answer_callback_query(call.id)
-        msg = await bot.send_message(call.message.chat.id,
-                               f"Введите ответ для тикета #{t_id}:")
-        # передаём t_id через partial, имя функции уже известно
-        return await bot.register_next_step_handler(msg, partial(_admin_save_ticket_reply, t_id=t_id))
+        await state.set_state(AdminStates.reply_support_ticket)
+        await state.update_data(t_id=t_id)
+        return await bot.send_message(call.message.chat.id, f"Введите ответ для тикета #{t_id}:")
 
-    async def _admin_save_ticket_reply(message: types.Message, t_id: int):
+    @dp.message(AdminStates.reply_support_ticket)
+    async def _admin_save_ticket_reply(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        await state.clear()
+        t_id = data.get("t_id")
         """Сохраняет ответ админа и уведомляет пользователя."""
         text = (message.text or "").strip()
         if not text:
@@ -1068,7 +1120,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         call.data.startswith("complaint_del_ad_") or
         call.data.startswith("complaint_ban_")
     )
-    async def handle_complaint_actions(call: types.CallbackQuery):
+    async def handle_complaint_actions(call: types.CallbackQuery, state: FSMContext):
         """
         Жалоба от search.py -> AdComplaint
         Кнопки:
@@ -1112,31 +1164,37 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             if action == "msg_seller":
                 # Написать продавцу
                 await bot.answer_callback_query(call.id, "Введите сообщение продавцу (ответом на это).")
-                msg = await bot.send_message(
+                await state.set_state(AdminStates.complaint_write_seller)
+                await state.update_data(seller_id=seller_id)
+                return await bot.send_message(
                     call.message.chat.id,
                     f"Напишите сообщение для продавца #{seller_id}:"
                 )
-                await bot.register_next_step_handler(msg, lambda m: process_msg_seller(m, seller_id))
             elif action == "del_ad":
                 ad_obj.status = "rejected"
                 comp.status = "resolved"
                 session.commit()
 
                 await bot.answer_callback_query(call.id, "Объявление отклонено/удалено.")
-                await bot.send_message(call.message.chat.id, f"Объявление #{ad_obj.id} -> 'rejected'.")
+                return await bot.send_message(call.message.chat.id, f"Объявление #{ad_obj.id} -> 'rejected'.")
             elif action == "ban_user":
                 await bot.answer_callback_query(call.id, "Укажите причину и срок (например: 'Мошенничество | 14').")
-                msg = await bot.send_message(
+                await state.set_state(AdminStates.complaint_ban_user)
+                await state.update_data(seller_id=seller_id, complaint_id=complaint_id)
+                return await bot.send_message(
                     call.message.chat.id,
                     f"Введите причину и срок бана для пользователя #{seller_id}, формат:\n"
                     "`Причина | кол-во_дней` (пример: `Мошенничество | 7`)",
                     parse_mode="Markdown"
                 )
-                # Передаём только complaint_id, чтобы не был "детачнут"
-                await bot.register_next_step_handler(msg, lambda m: process_ban_user(m, seller_id, complaint_id))
-            return None
+            else:
+                return None
 
-    async def process_msg_seller(message: types.Message, seller_id: int):
+    @dp.message(AdminStates.complaint_write_seller)
+    async def process_msg_seller(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        await state.clear()
+        seller_id = data.get("seller_id")
         text_to_seller = message.text.strip()
         try:
             await bot.send_message(seller_id, f"[Админ]: {text_to_seller}")
@@ -1144,7 +1202,12 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
         except:
             await bot.send_message(message.chat.id, "Ошибка при отправке (возможно, продавец не запустил бота).")
 
-    async def process_ban_user(message: types.Message, seller_id: int, complaint_id: int):
+    @dp.message(AdminStates.complaint_ban_user)
+    async def process_ban_user(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        await state.clear()
+        seller_id = data.get("seller_id")
+        complaint_id = data.get("complaint_id")
         txt = message.text.strip()
         if "|" not in txt:
             return await bot.send_message(message.chat.id, "Неверный формат. Нужно: `Причина | кол-во_дней`.")
@@ -1181,47 +1244,60 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
     #    Редактировать профиль пользователя
     # ============================
     @dp.message(lambda m: m.text == "Редактировать профиль пользователя")
-    async def edit_profile_user_start(message: types.Message):
+    async def edit_profile_user_start(message: types.Message, state: FSMContext):
         if not is_admin(message.chat.id):
             return
-        msg = await bot.send_message(
+        await state.set_state(AdminStates.edit_profile_user_id)
+        await bot.send_message(
             message.chat.id,
             "Введите ID пользователя, профиль которого хотите изменить:"
         )
-        await bot.register_next_step_handler(msg, process_edit_profile_user_id)
 
-    async def process_edit_profile_user_id(message: types.Message):
+    @dp.message(AdminStates.edit_profile_user_id)
+    async def process_edit_profile_user_id(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         try:
             uid = int(message.text.strip())
         except:
+            await state.clear()
             return await bot.send_message(chat_id, "Некорректный ID.")
 
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=uid).first()
             if not user:
+                await state.clear()
                 return await bot.send_message(chat_id, f"Пользователь #{uid} не найден.")
 
-        await bot.send_message(
+        await state.update_data(uid=uid)
+        await state.set_state(AdminStates.edit_profile_field)
+        return await bot.send_message(
             chat_id,
             f"Редактирование профиля пользователя #{uid}.\n"
             "Введите одно из: *fio* (ФИО), *inn* (ИНН), *company* (название компании).",
             parse_mode="Markdown"
         )
-        return await bot.register_next_step_handler(message, lambda msg: process_edit_profile_field(msg, uid))
 
-    async def process_edit_profile_field(message: types.Message, user_id: int):
+    @dp.message(AdminStates.edit_profile_field)
+    async def process_edit_profile_field(message: types.Message, state: FSMContext):
+        data = await state.get_data()
         chat_id = message.chat.id
         field = message.text.strip().lower()
         if field not in ["fio", "inn", "company"]:
+            await state.clear()
             return await bot.send_message(chat_id, "Неизвестное поле. Операция прервана.")
 
-        await bot.send_message(chat_id, f"Введите новое значение поля *{field.upper()}*:", parse_mode="Markdown")
-        return await bot.register_next_step_handler(message, lambda msg: process_edit_profile_value(msg, user_id, field))
+        await state.update_data(field=field)
+        await state.set_state(AdminStates.edit_profile_value)
+        return await bot.send_message(chat_id, f"Введите новое значение поля *{field.upper()}*:", parse_mode="Markdown")
 
-    async def process_edit_profile_value(message: types.Message, user_id: int, field: str):
+    @dp.message(AdminStates.edit_profile_value)
+    async def process_edit_profile_value(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        await state.clear()
         chat_id = message.chat.id
         new_val = message.text.strip()
+        user_id = data.get("uid")
+        field = data.get("field")
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=user_id).first()
             if not user:

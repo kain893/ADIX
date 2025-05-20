@@ -4,11 +4,26 @@ from decimal import Decimal
 from typing import List
 
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 from config import ADMIN_IDS, MARKIROVKA_GROUP_ID, ADMIN_EXTENSION_CHAT_ID, ADMIN_WITHDRAW_CHAT_ID, ADMIN_TOPUP_CHAT_ID, \
     ADMIN_PROFILE_CHAT_ID
 from database import SessionLocal, User, Ad, TopUp, Withdrawal, AdChat, AdChatMessage, ChatGroup
 from utils import main_menu_keyboard, rus_status
+
+
+class ProfileStates(StatesGroup):
+    chat_write = State()
+    edit_profile = State()
+    waiting_for_company_input = State()
+    waiting_for_inn_input = State()
+    waiting_for_fio_input = State()
+
+class FinanceStates(StatesGroup):
+    waiting_for_topup_sum = State()
+    waiting_for_withdrawal_sum = State()
+    waiting_for_withdrawal_acc = State()
 
 # заявки, ожидающие одобрения админом
 pending_profile_changes = {}         # change_id -> {"user_id": …, "field": …, "value": …}
@@ -225,7 +240,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ------------------- Разместить существующее объявление на бирже -------------------
     @dp.callback_query(lambda call: call.data.startswith("profile_myad_exchange_"))
-    async def profile_myad_exchange_callback(call: types.CallbackQuery):
+    async def profile_myad_exchange_callback(call: types.CallbackQuery, state: FSMContext):
         """
         Запуск "мини-флоу" для существующего объявления, чтобы перевести его в Формат2.
         """
@@ -262,15 +277,15 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "need_inn": False,
             "need_company": False
         }
-        return await check_and_ask_missing_profile_data(chat_id)
+        return await check_and_ask_missing_profile_data(chat_id, state)
 
-    async def check_and_ask_missing_profile_data(chat_id):
+    async def check_and_ask_missing_profile_data(chat_id, state: FSMContext):
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=chat_id).first()
             if not user:
                 await bot.send_message(chat_id, "Ошибка: пользователь не найден.")
                 user_steps.pop(chat_id, None)
-                return
+                return None
 
             # ФИО
             if not user.full_name:
@@ -278,9 +293,8 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 kb = types.InlineKeyboardMarkup(inline_keyboard=[[
                     types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow")
                 ]])
-                await bot.send_message(chat_id, "Укажите ФИО (например, Иванов Иван Иванович):", reply_markup=kb)
-                await bot.register_next_step_handler_by_chat_id(chat_id, process_exchange_fio)
-                return
+                await state.set_state(ProfileStates.waiting_for_fio_input)
+                return await bot.send_message(chat_id, "Укажите ФИО (например, Иванов Иван Иванович):", reply_markup=kb)
 
             # Компания
             if not user.company_name:
@@ -289,9 +303,8 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                     [ types.InlineKeyboardButton(text="Пропустить", callback_data="exchange_company_skip") ],
                     [ types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow") ]
                 ])
-                await bot.send_message(chat_id, "Укажите название компании (если есть) или пропустите:", reply_markup=kb)
-                await bot.register_next_step_handler_by_chat_id(chat_id, process_exchange_company)
-                return
+                await state.set_state(ProfileStates.waiting_for_company_input)
+                return await bot.send_message(chat_id, "Укажите название компании (если есть) или пропустите:", reply_markup=kb)
 
             # ИНН
             if not user.inn:
@@ -300,44 +313,46 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                 kb = types.InlineKeyboardMarkup(inline_keyboard=[[
                     types.InlineKeyboardButton(text="Отмена", callback_data="cancel_exchange_flow")
                 ]])
-                await bot.send_message(
+                await state.set_state(ProfileStates.waiting_for_inn_input)
+                return await bot.send_message(
                     chat_id,
                     f"Укажите ИНН ({digits_needed} цифр):",
                     reply_markup=kb
                 )
-                await bot.register_next_step_handler_by_chat_id(chat_id, process_exchange_inn)
-                return
 
         # Если всё есть – сразу идём к выбору региона
-        await ask_exchange_region(chat_id)
+        return await ask_exchange_region(chat_id)
 
-    async def process_exchange_fio(message: types.Message):
+    @dp.message(ProfileStates.waiting_for_fio_input)
+    async def process_exchange_fio(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         fio = message.text.strip()
         if not fio:
-            await check_and_ask_missing_profile_data(chat_id)
-            return
+            await state.clear()
+            return await check_and_ask_missing_profile_data(chat_id, state)
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=chat_id).first()
             if user:
                 user.full_name = fio
                 session.commit()
-        await check_and_ask_missing_profile_data(chat_id)
+        await state.clear()
+        return await check_and_ask_missing_profile_data(chat_id, state)
 
     @dp.callback_query(lambda call: call.data == "exchange_company_skip")
-    async def exchange_company_skip(call: types.CallbackQuery):
+    async def exchange_company_skip(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
-        await bot.clear_step_handler_by_chat_id(chat_id)
+        await state.clear()
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=chat_id).first()
             if user:
                 user.company_name = None
                 session.commit()
         await bot.answer_callback_query(call.id, "Компания пропущена.")
-        await check_and_ask_missing_profile_data(chat_id)
+        await check_and_ask_missing_profile_data(chat_id, state)
 
-    async def process_exchange_company(message: types.Message):
+    @dp.message(ProfileStates.waiting_for_company_input)
+    async def process_exchange_company(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         company_name = message.text.strip()
         with SessionLocal() as session:
@@ -345,29 +360,34 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if user:
                 user.company_name = company_name
                 session.commit()
-        await check_and_ask_missing_profile_data(chat_id)
+        await state.clear()
+        await check_and_ask_missing_profile_data(chat_id, state)
 
-    async def process_exchange_inn(message: types.Message):
+    @dp.message(ProfileStates.waiting_for_inn_input)
+    async def process_exchange_inn(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         inn_str = message.text.strip()
         with SessionLocal() as session:
             user = session.query(User).filter_by(id=chat_id).first()
             if not user:
+                await state.clear()
                 await bot.send_message(chat_id, "Ошибка: пользователь не найден.")
                 user_steps.pop(chat_id, None)
                 return None
             digits_needed = 13 if user.company_name else 12
             if len(inn_str) != digits_needed or not inn_str.isdigit():
-                return await check_and_ask_missing_profile_data(chat_id)
+                await state.clear()
+                return await check_and_ask_missing_profile_data(chat_id, state)
             user.inn = inn_str
             session.commit()
-        return await check_and_ask_missing_profile_data(chat_id)
+        await state.clear()
+        return await check_and_ask_missing_profile_data(chat_id, state)
 
     @dp.callback_query(lambda call: call.data == "cancel_exchange_flow")
-    async def cancel_exchange_flow(call: types.CallbackQuery):
+    async def cancel_exchange_flow(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         await bot.delete_message(chat_id, call.message.message_id)
-        await bot.clear_step_handler_by_chat_id(chat_id)
+        await state.clear()
         user_steps.pop(chat_id, None)
         await bot.answer_callback_query(call.id, "Размещение на бирже отменено.")
         await bot.send_message(chat_id, "Операция отменена.", reply_markup=main_menu_keyboard())
@@ -729,7 +749,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ---------- шаг 1: пользователь хочет изменить поле ----------
     @dp.callback_query(lambda c: c.data.startswith("edit_profile_"))
-    async def ask_new_profile_value(call: types.CallbackQuery):
+    async def ask_new_profile_value(call: types.CallbackQuery, state: FSMContext):
         field = call.data.replace("edit_profile_", "")  # fio / inn / company
         user_steps[call.from_user.id] = {"edit_field": field}
 
@@ -739,11 +759,13 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             "company": "Введите название компании (или «−», чтобы удалить):"
         }
         await bot.answer_callback_query(call.id)
-        msg = await bot.send_message(call.from_user.id, hints[field])
-        await bot.register_next_step_handler(msg, receive_new_profile_value)
+        await state.set_state(ProfileStates.edit_profile)
+        await bot.send_message(call.from_user.id, hints[field])
 
     # ---------- шаг 2: получили значение – создаём заявку на одобрение ----------
-    async def receive_new_profile_value(message: types.Message):
+    @dp.message(ProfileStates.edit_profile)
+    async def receive_new_profile_value(message: types.Message, state: FSMContext):
+        await state.clear()
         uid = message.chat.id
         if uid not in user_steps or "edit_field" not in user_steps[uid]:
             return await bot.send_message(uid, "Не найден контекст изменения.")
@@ -831,14 +853,15 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # -----------------------------------------------------------------------------
     @dp.message(lambda m: m.text == "Пополнить баланс")
-    async def add_balance(message: types.Message):
-        msg = await bot.send_message(
+    async def add_balance(message: types.Message, state: FSMContext):
+        await state.set_state(FinanceStates.waiting_for_topup_sum)
+        await bot.send_message(
             message.chat.id,
-            "Введите сумму , на которую хотите пополнить баланс:"
+            "Введите сумму, на которую хотите пополнить баланс:"
         )
-        await bot.register_next_step_handler(msg, process_topup_amount)
 
-    async def process_topup_amount(message: types.Message):
+    @dp.message(FinanceStates.waiting_for_topup_sum)
+    async def process_topup_amount(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         try:
             amount = float(message.text.replace(",", "."))
@@ -849,6 +872,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                                     "Некорректная сумма. Нужно от 50 до 100000 руб.\nПопробуйте снова.")
 
         user_steps[chat_id] = {"topup": {"amount": amount}}
+        await state.clear()
         return await ask_which_card(chat_id)
 
     async def ask_which_card(chat_id: int):
@@ -991,15 +1015,15 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # ===================== ВЫВОД БАЛАНСА =====================
 
     @dp.message(lambda m: m.text == "Вывод баланса")
-    async def withdraw_balance_step1(message: types.Message):
+    async def withdraw_balance_step1(message: types.Message, state: FSMContext):
         """
         Шаг 1 — спрашиваем сумму.
         """
-        msg = await bot.send_message(message.chat.id,
-                               "Введите сумму, которую хотите вывести (минимум 100 руб.):")
-        await bot.register_next_step_handler(msg, withdraw_balance_step2)
+        await state.set_state(FinanceStates.waiting_for_withdrawal_sum)
+        await bot.send_message(message.chat.id, "Введите сумму, которую хотите вывести (минимум 100 руб.):")
 
-    async def withdraw_balance_step2(message: types.Message):
+    @dp.message(FinanceStates.waiting_for_withdrawal_sum)
+    async def withdraw_balance_step2(message: types.Message, state: FSMContext):
         """
         Валидируем сумму и спрашиваем карту.
         """
@@ -1009,42 +1033,42 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if amount < 100:
                 raise ValueError
         except ValueError:
-            return await bot.send_message(uid,
-                                    "Некорректная сумма. Минимум — 100 руб. Попробуйте ещё раз.")
+            return await bot.send_message(uid, "Некорректная сумма. Минимум — 100 руб. Попробуйте ещё раз.")
 
         # проверяем баланс
         with SessionLocal() as sess:
             user = sess.query(User).get(uid)
             if not user:
-                return await bot.send_message(uid, "Вы не зарегистрированы.",
-                                        reply_markup=main_menu_keyboard())
+                await state.clear()
+                return await bot.send_message(uid, "Вы не зарегистрированы.", reply_markup=main_menu_keyboard())
             if float(user.balance) < amount:
-                return await bot.send_message(uid,
-                                        f"Недостаточно средств (баланс: {user.balance} руб.).",
-                                        reply_markup=main_menu_keyboard())
+                await state.clear()
+                return await bot.send_message(uid, f"Недостаточно средств (баланс: {user.balance} руб.).",
+                                              reply_markup=main_menu_keyboard())
 
         # сохраняем этап
         user_steps[uid] = {"withdraw": {"amount": amount}}
-        msg = await bot.send_message(uid,
+        await state.set_state(FinanceStates.waiting_for_withdrawal_acc)
+        return await bot.send_message(uid,
                                "Введите <b>номер карты</b> (16 цифр) или счёта, "
                                "на который перевести деньги:",
                                parse_mode="HTML")
-        return await bot.register_next_step_handler(msg, withdraw_balance_step3)
 
-    async def withdraw_balance_step3(message: types.Message):
+    @dp.message(FinanceStates.waiting_for_withdrawal_acc)
+    async def withdraw_balance_step3(message: types.Message, state: FSMContext):
         """
         Получаем карту, создаём заявку, шлём админу.
         """
         uid = message.chat.id
         flow = user_steps.get(uid, {}).get("withdraw")
         if not flow:
+            await state.clear()
             return await bot.send_message(uid, "Не найден контекст вывода средств.")
 
         card = message.text.strip().replace(" ", "")
         # простая валидация: 16 цифр
         if not (card.isdigit() and len(card) == 16):
-            return await bot.send_message(uid,
-                                    "Номер карты должен содержать 16 цифр. Попробуйте снова.")
+            return await bot.send_message(uid, "Номер карты должен содержать 16 цифр. Попробуйте снова.")
 
         amount = flow["amount"]
 
@@ -1062,6 +1086,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             wd_id = wd.id
 
         # уведомляем пользователя
+        await state.clear()
         await bot.send_message(uid,
                                f"✅ Заявка на вывод #{wd_id} на сумму {amount} руб. "
                                "отправлена администратору.\nОжидайте подтверждения.",
@@ -1101,12 +1126,12 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ------------------- Выложить на БИРЖЕ (Формат2 напрямую) -------------------
     @dp.message(lambda m: m.text == "Выложить на БИРЖЕ ADIX")
-    async def place_on_adix_exchange(message: types.Message):
+    async def place_on_adix_exchange(message: types.Message, state: FSMContext):
         """
         Прямой запуск Формата2 (биржа) через add_ads.py
         """
         from add_ads import start_format2_flow_direct
-        await start_format2_flow_direct(bot, message, user_steps)
+        await start_format2_flow_direct(bot, message, state, user_steps)
 
     # ------------------- Чаты -------------------
     @dp.message(lambda m: m.text == "Чаты")
@@ -1120,7 +1145,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if not chats:
                 return await bot.send_message(user_id, "У вас нет активных чатов.")
 
-            kb = types.InlineKeyboardMarkup(row_width=1)
+            buttons: List[List[types.InlineKeyboardButton]] = []
             for ch in chats:
                 role = "продавец" if ch.seller_id == user_id else "покупатель"
                 other_id = ch.seller_id if ch.buyer_id == user_id else ch.buyer_id
@@ -1129,10 +1154,12 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
                     other_name = f"@{other_user.username}" if other_user.username else f"User {other_id}"
                 else:
                     other_name = f"User {other_id}"
-
                 ad_title = ch.ad.inline_button_text or f"Объявление #{ch.ad_id}"
-                btn_text = f"[{ad_title}] (Вы - {role}, собеседник -> {other_name})"
-                kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"open_chat_{ch.id}"))
+                buttons.append([types.InlineKeyboardButton(
+                    text=f"[{ad_title}] (Вы - {role}, собеседник -> {other_name})",
+                    callback_data=f"open_chat_{ch.id}")
+                ])
+            kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
             await bot.send_message(user_id, "Ваши открытые чаты:", reply_markup=kb)
             return None
@@ -1190,7 +1217,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         return await bot.answer_callback_query(call.id)
 
     @dp.callback_query(lambda call: call.data.startswith("chat_write_"))
-    async def chat_write_callback(call: types.CallbackQuery):
+    async def chat_write_callback(call: types.CallbackQuery, state: FSMContext):
         user_id = call.from_user.id
         ch_id_str = call.data.replace("chat_write_", "")
         try:
@@ -1199,15 +1226,17 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             return await bot.answer_callback_query(call.id, "Некорректный ID чата", show_alert=True)
 
         await bot.answer_callback_query(call.id)
-        msg = await bot.send_message(user_id, "Напишите текст сообщения:")
         user_steps[user_id] = {"chat_write": ch_id}
-        return await bot.register_next_step_handler(msg, process_chat_message)
+        await state.set_state(ProfileStates.chat_write)
+        return await bot.send_message(user_id, "Напишите текст сообщения:")
 
-    async def process_chat_message(message: types.Message):
+    @dp.message(ProfileStates.chat_write)
+    async def process_chat_message(message: types.Message, state: FSMContext):
         """
         Сохраняем сообщение, рассылаем второй стороне уведомление
         и даём кнопку «Ответить».
         """
+        await state.clear()
         user_id = message.chat.id
         if user_id not in user_steps or "chat_write" not in user_steps[user_id]:
             return await bot.send_message(user_id, "Ошибка: не найден контекст чата.")

@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 from aiogram import Bot, Dispatcher, types
-from database import SessionLocal, Ad, User, AdChat, Sale, AdComplaint
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+
 from config import MAIN_CATEGORIES, CITY_STRUCTURE, ADMIN_COMPLAINT_CHAT_ID
+from database import SessionLocal, Ad, User, AdChat, Sale
 from utils import main_menu_keyboard
+
+class SearchStates(StatesGroup):
+    custom_city = State()
+    ad_complain = State()
 
 def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     """
@@ -16,7 +23,6 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
          - если сделка завершена => «Оставить отзыв»
          - иначе => «Пожаловаться»
     """
-
     @dp.message(lambda m: m.text == "🔍Поиск объявлений")
     async def start_search_flow(message: types.Message):
         chat_id = message.chat.id
@@ -55,7 +61,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     @dp.callback_query(lambda call: call.data.startswith("srch_region_") or
         call.data in ("srch_city_custom", "srch_city_skip", "srch_cancel"))
-    async def handle_region_choice(call: types.CallbackQuery):
+    async def handle_region_choice(call: types.CallbackQuery, state: FSMContext):
         chat_id = call.message.chat.id
         if chat_id not in user_steps or user_steps[chat_id]["mode"] != "search_flow":
             return await bot.answer_callback_query(call.id, "Нет активного поиска", show_alert=True)
@@ -83,8 +89,8 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             # Пользователь вводит свой город вручную
             await bot.delete_message(chat_id, call.message.message_id)
             await bot.answer_callback_query(call.id)
-            msg = await bot.send_message(chat_id, "Введите свой город (поиск будет по частичному совпадению):")
-            return await bot.register_next_step_handler(msg, process_custom_city)
+            await state.set_state(SearchStates.custom_city)
+            return await bot.send_message(chat_id, "Введите свой город (поиск будет по частичному совпадению):")
 
         # srch_region_{i}
         if call.data.startswith("srch_region_"):
@@ -107,7 +113,9 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         else:
             return None
 
-    async def process_custom_city(message: types.Message):
+    @dp.message(SearchStates.custom_city)
+    async def process_custom_city(message: types.Message, state: FSMContext):
+        await state.clear()
         chat_id = message.chat.id
         if chat_id not in user_steps or user_steps[chat_id]["mode"] != "search_flow":
             return
@@ -186,13 +194,24 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # ====================== Шаг 3: Выбор категории ======================
     async def ask_for_category(chat_id):
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        for cat_name in MAIN_CATEGORIES.keys():
-            cb = f"srch_cat_{cat_name}"
-            kb.add(types.InlineKeyboardButton(text=cat_name, callback_data=cb))
-        kb.add(types.InlineKeyboardButton(text="Все категории", callback_data="srch_cat_all"))
-        kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel"))
-
+        categories = list(MAIN_CATEGORIES.keys())
+        buttons = [
+            [
+                types.InlineKeyboardButton(text=f, callback_data=f"srch_cat_{f}"),
+                types.InlineKeyboardButton(text=s, callback_data=f"srch_cat_{s}")
+            ]
+            for (f, s) in zip(categories[::2], categories[1::2])
+        ]
+        if len(categories) % 2 > 0:
+            last = categories[len(categories) - 1]
+            buttons.append([
+                types.InlineKeyboardButton(text=last, callback_data=f"srch_cat_{last}")
+            ])
+        buttons.append([
+            types.InlineKeyboardButton(text="Все категории", callback_data="srch_cat_all"),
+            types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel")
+        ])
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
         await bot.send_message(chat_id, "3) Выберите категорию или «Все категории»:", reply_markup=kb)
 
     @dp.callback_query(lambda call:
@@ -251,19 +270,26 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         """
         st = user_steps[chat_id]
         sub_list = st.get("subcat_list", [])
-
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        for i, name in enumerate(sub_list):
-            kb.add(types.InlineKeyboardButton(text=name, callback_data=f"srch_subcat_{i}"))
-        kb.add(types.InlineKeyboardButton(text="Пропустить", callback_data="srch_subcat_skip"))
-        kb.add(types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel"))
-
+        buttons = [
+            [
+                types.InlineKeyboardButton(text=sub_list[2 * i], callback_data=f"srch_subcat_{2 * i}"),
+                types.InlineKeyboardButton(text=sub_list[2 * i + 1], callback_data=f"srch_subcat_{2 * i + 1}")
+            ] for i in range(0, len(sub_list) // 2)
+        ]
+        if len(sub_list) % 2 > 0:
+            buttons.append([
+                types.InlineKeyboardButton(text=sub_list[len(sub_list) - 1], callback_data=f"srch_subcat_{len(sub_list) - 1}")
+            ])
+        buttons.append([
+            types.InlineKeyboardButton(text="Пропустить", callback_data="srch_subcat_skip"),
+            types.InlineKeyboardButton(text="Отмена", callback_data="srch_cancel")
+        ])
+        kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
         await bot.send_message(
             chat_id,
             f"Категория «{cat_name}»: выберите подкатегорию:",
             reply_markup=kb
         )
-
 
     @dp.callback_query(lambda call:
         call.data.startswith("srch_subcat_") or call.data == "srch_subcat_skip")
@@ -472,7 +498,7 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
     # =============== Пожаловаться ================
     @dp.callback_query(lambda call: call.data.startswith("complain_ad_"))
-    async def complain_about_ad(call: types.CallbackQuery):
+    async def complain_about_ad(call: types.CallbackQuery, state: FSMContext):
         """
         Пользователь жалуется на объявление (не купил или сделка не завершена).
         Сохраняем в AdComplaint, уведомляем админов.
@@ -486,11 +512,13 @@ def register_search_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
         user_id = call.from_user.id
         await bot.answer_callback_query(call.id)
         # Просим текст жалобы
-        msg = await bot.send_message(user_id, "Опишите причину/суть жалобы:")
         user_steps[user_id] = {"complaint_ad_id": ad_id}
-        return await bot.register_next_step_handler(msg, process_complaint_text)
+        await state.set_state(SearchStates.ad_complain)
+        return await bot.send_message(user_id, "Опишите причину/суть жалобы:")
 
-    async def process_complaint_text(message: types.Message):
+    @dp.message(SearchStates.ad_complain)
+    async def process_complaint_text(message: types.Message, state: FSMContext):
+        await state.clear()
         user_id = message.chat.id
         if user_id not in user_steps or "complaint_ad_id" not in user_steps[user_id]:
             return await bot.send_message(user_id, "Ошибка: нет информации об объявлении. Жалоба отменена.")
