@@ -195,6 +195,7 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
 
         # Повторяем логику my_ads
         with SessionLocal() as session:
+            chat_id = call.message.chat.id
             user = session.query(User).filter_by(id=chat_id).first()
             if not user:
                 return await bot.send_message(chat_id, "Вы не зарегистрированы.", reply_markup=main_menu_keyboard())
@@ -203,13 +204,14 @@ def register_profile_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
             if not ads_list:
                 return await bot.send_message(chat_id, "У вас нет объявлений.", reply_markup=main_menu_keyboard())
 
-            kb = types.InlineKeyboardMarkup(row_width=1)
-            for ad_obj in ads_list:
-                btn_text = f"Объявление #{ad_obj.id} ({rus_status(ad_obj.status)})"
-                callback_data = f"profile_my_ad_{ad_obj.id}"
-                kb.add(types.InlineKeyboardButton(text=btn_text, callback_data=callback_data))
-
-            kb.add(types.InlineKeyboardButton(text="Закрыть", callback_data="profile_myads_close"))
+            buttons = [
+                [ types.InlineKeyboardButton(
+                    text=f"Объявление #{ad_obj.id} ({rus_status(ad_obj.status)})",
+                    callback_data=f"profile_my_ad_{ad_obj.id}"
+                ) ] for ad_obj in ads_list
+            ]
+            buttons.append([ types.InlineKeyboardButton(text="Закрыть", callback_data="profile_myads_close") ])
+            kb = types.InlineKeyboardMarkup(inline_keyboard=buttons)
             return await bot.send_message(chat_id, "Ваши объявления:", reply_markup=kb)
 
     # ---------- продление на 30 дней --------------------

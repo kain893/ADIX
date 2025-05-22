@@ -333,7 +333,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
             return await bot.send_message(message.chat.id, f"Слишком большая цена ({price}). Чат пропущен.")
 
         with SessionLocal() as session:
-            cg = ChatGroup(chat_id=chat_id_val, title=title, price=price, is_active=True)
+            cg = ChatGroup(chat_id=chat_id_val, title=title, price_1=price, is_active=True)
             session.add(cg)
             session.commit()
         return await bot.send_message(message.chat.id, f"Чат '{title}' добавлен!")
@@ -660,7 +660,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                         else:
                             session.add(ChatGroup(chat_id=chat_id_val,
                                                   title=title_val or "Без названия",
-                                                  price=price_val,
+                                                  price_1=price_val,
                                                   is_active=True))
                             rows_added += 1
                     else:
@@ -673,7 +673,7 @@ def register_admin_handlers(bot: Bot, dp: Dispatcher):
                             # создаём с техническим chat_id
                             session.add(ChatGroup(chat_id=next_tech_id,
                                                   title=title_val,
-                                                  price=price_val,
+                                                  price_1=price_val,
                                                   is_active=True))
                             next_tech_id -= 1
                             rows_added += 1

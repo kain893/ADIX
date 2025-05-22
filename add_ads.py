@@ -232,7 +232,7 @@ def register_add_ads_handlers(bot: Bot, dp: Dispatcher, user_steps: dict):
     # ---------------------------------------------------------------------------
     async def ask_for_inline_button_name(chat_id, state: FSMContext):
         text_ask = (
-            "1. Введите название для кнопки (до 3 слов). Например: «Стул».\n"
+            "1. Введите название для кнопки (до 2 слов). Например: «Стул».\n"
             "*Согласно пользовательскому соглашению ADIX.*"
         )
         kb = types.InlineKeyboardMarkup(inline_keyboard=[[
